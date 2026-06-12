@@ -1,0 +1,98 @@
+[
+  {
+    "id": "threat-of-the-week",
+    "description": "Plain-English security tip framed as a 'threat of the week'.",
+    "angle": "Name one current threat, explain it simply, give one practical defense. Reassuring, not fear-mongering.",
+    "vertical": null
+  },
+  {
+    "id": "backup-dr-myth-vs-reality",
+    "description": "Backup and disaster recovery, myth vs reality.",
+    "angle": "Bust one common misconception about backups (e.g. 'we have backups so we are safe'). Explain what real recoverability looks like.",
+    "vertical": null
+  },
+  {
+    "id": "compliance-spotlight",
+    "description": "Compliance spotlight rotating NIST / HIPAA / CJIS / SEC / PCI, tied to a vertical.",
+    "angle": "Pick one framework, explain in plain English why it matters for a specific industry, and how an MSP makes it manageable.",
+    "vertical": "Public Safety & Municipalities"
+  },
+  {
+    "id": "phishing-red-flags",
+    "description": "Phishing red flags employees should know.",
+    "angle": "List 2-3 concrete tells of a phishing message. Educational, empowering, end with a soft CTA.",
+    "vertical": null
+  },
+  {
+    "id": "password-mfa-basics",
+    "description": "Password and MFA basics done right.",
+    "angle": "Explain why MFA matters and one practical way to roll it out without frustrating staff.",
+    "vertical": null
+  },
+  {
+    "id": "what-an-msp-does",
+    "description": "'What an MSP actually does' explainer.",
+    "angle": "Demystify managed IT for a small business owner. Frame the MSP as a dedicated IT department without the overhead.",
+    "vertical": null
+  },
+  {
+    "id": "local-austin-partner",
+    "description": "Why a local Austin IT partner beats a faceless national provider.",
+    "angle": "Lean into being Austin-based: local, responsive, knows Texas businesses. A real partner you can reach, not a distant call center.",
+    "vertical": null
+  },
+  {
+    "id": "vertical-ministries",
+    "description": "Vertical spotlight: Ministries & Non-Profits (houses of worship).",
+    "angle": "Speak to a ministry or non-profit: protect donor data and member info on a tight budget. Warm, mission-aligned tone.",
+    "vertical": "Ministries & Non-Profits"
+  },
+  {
+    "id": "vertical-public-safety",
+    "description": "Vertical spotlight: Public Safety & Municipalities (CJIS, body cam storage, dispatch reliability).",
+    "angle": "Speak to a police department or municipality: CJIS-compliant body cam storage, dispatch uptime, ransomware resilience, audit-ready docs.",
+    "vertical": "Public Safety & Municipalities"
+  },
+  {
+    "id": "vertical-manufacturing",
+    "description": "Vertical spotlight: Manufacturing (uptime, OT security).",
+    "angle": "Speak to a manufacturer: downtime costs money, OT/IT convergence creates risk. Strategic infrastructure framing.",
+    "vertical": "Manufacturing"
+  },
+  {
+    "id": "vertical-hospitality-retail",
+    "description": "Vertical spotlight: Hospitality & Retail Franchises (POS/PCI, guest wifi).",
+    "angle": "Speak to a franchise or hospitality operator: secure POS, PCI compliance, safe guest wifi across locations.",
+    "vertical": "Hospitality & Retail Franchises"
+  },
+  {
+    "id": "helpdesk-human-story",
+    "description": "Helpdesk / fast-response value prop, human story angle.",
+    "angle": "Tell the value of fast, human helpdesk response. A real person picks up. Frame around reassurance and trust.",
+    "vertical": null
+  },
+  {
+    "id": "patch-management",
+    "description": "Patch management and why 'we'll do it later' is risky.",
+    "angle": "Explain why timely patching matters, using a relatable 'we'll get to it' scenario. Practical, non-judgmental.",
+    "vertical": null
+  },
+  {
+    "id": "small-biz-cyber-stat",
+    "description": "Small-business cyber stat + reassurance + soft CTA.",
+    "angle": "Use the ~60% of small businesses close within 6 months of a cyberattack stat sparingly, then pivot to reassurance and accessible protection.",
+    "vertical": null
+  },
+  {
+    "id": "m365-azure-cloud",
+    "description": "Microsoft 365 / Azure / cloud security tips.",
+    "angle": "One practical cloud security tip for M365 or Azure (e.g. conditional access, secure sharing). Keep it approachable.",
+    "vertical": null
+  },
+  {
+    "id": "enterprise-security-on-purpose",
+    "description": "'Enterprise security for small business, on purpose' credibility post.",
+    "angle": "Lean into the tagline: we brought enterprise IT security to small business, on purpose. Credibility + mission, no enterprise price tag.",
+    "vertical": null
+  }
+]

@@ -1,0 +1,762 @@
+"""Render on-brand SkySystems USA post cards as PNGs (no browser needed).
+
+Pure-Pillow. Uses the real SkySystems logo (assets/logo_full.png and the icon
+mark assets/logo_mark.png) and rotates across several distinct, coherent
+layouts so consecutive posts look varied and deliberately designed rather than
+template-stamped.
+
+Public API:
+    render_card(headline, subtext, out_path, kicker=..., highlight=..., style=None)
+        -> (Path, style_name)
+    STYLE_NAMES  -> list[str] of available style names
+
+A style is chosen at random when `style` is None.
+"""
+
+from __future__ import annotations
+
+import random
+import re
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+_LIST_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)")
+_LABEL_RE = re.compile(r"^\s*([A-Za-z]{3,12}):\s+(\S.*)")
+
+# Canvas: Facebook's recommended shared-image size.
+W, H = 1200, 630
+
+# Palette. Navy background + the logo's green and blue as accents.
+BG_TOP = (10, 26, 47)        # #0a1a2f
+BG_BOTTOM = (10, 14, 20)     # #0a0e14
+GREEN = (52, 174, 76)        # logo green
+GREEN_SOFT = (46, 204, 113)
+BLUE = (43, 108, 196)        # logo "Sky" blue
+WHITE = (245, 248, 252)      # #f5f8fc
+MUTED = (159, 179, 200)      # #9fb3c8
+
+PAD_X = 80
+
+_ASSETS = Path(__file__).resolve().parent.parent / "assets"
+_FONT_DIR = _ASSETS / "fonts"
+_LOGO_FULL = _ASSETS / "logo_full.png"
+_LOGO_MARK = _ASSETS / "logo_mark.png"
+
+
+# ---------------------------------------------------------------------------
+# Style definitions
+# ---------------------------------------------------------------------------
+STYLES: dict[str, dict] = {
+    "grid-left": dict(
+        texture="grid", glow=(0.74, 0.16, GREEN), layout="left",
+        highlight=GREEN_SOFT, watermark=False,
+    ),
+    "mark-right": dict(
+        texture="plain", glow=(0.78, 0.22, BLUE), layout="left",
+        highlight=GREEN_SOFT, watermark=True,
+    ),
+    "centered": dict(
+        texture="grid-faint", glow=(0.5, 0.10, GREEN), layout="center",
+        highlight=BLUE, watermark=False,
+    ),
+    "dots-left": dict(
+        texture="dots", glow=(0.80, 0.82, BLUE), layout="left",
+        highlight=GREEN_SOFT, watermark=False,
+    ),
+    "diagonal-left": dict(
+        texture="diagonal", glow=(0.18, 0.85, GREEN), layout="left",
+        highlight=BLUE, watermark=False,
+    ),
+}
+STYLE_NAMES = list(STYLES.keys())
+
+
+# ---------------------------------------------------------------------------
+# Fonts
+# ---------------------------------------------------------------------------
+def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
+    f = ImageFont.truetype(str(_FONT_DIR / name), size)
+    if name.startswith("NunitoSans"):
+        # Variable font default weight is 200 (too thin); axis order is
+        # [Weight, Width, Optical size, YTLC]. Pin weight 400.
+        try:
+            f.set_variation_by_axes([400, 100, 12, 500])
+        except Exception:
+            pass
+    return f
+
+
+# ---------------------------------------------------------------------------
+# Background, texture, glow
+# ---------------------------------------------------------------------------
+def _vertical_gradient() -> Image.Image:
+    img = Image.new("RGB", (W, H), BG_BOTTOM)
+    draw = ImageDraw.Draw(img)
+    for y in range(H):
+        t = (y / (H - 1)) ** 0.85
+        r = round(BG_TOP[0] + (BG_BOTTOM[0] - BG_TOP[0]) * t)
+        g = round(BG_TOP[1] + (BG_BOTTOM[1] - BG_TOP[1]) * t)
+        b = round(BG_TOP[2] + (BG_BOTTOM[2] - BG_TOP[2]) * t)
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
+    return img.convert("RGBA")
+
+
+def _radial_mask(focus=(0.72, 0.18), reach=0.62) -> Image.Image:
+    """A soft mask: bright at `focus`, fading to dark at the edges."""
+    mask = Image.new("L", (W, H), 0)
+    md = ImageDraw.Draw(mask)
+    cx, cy, rad = int(W * focus[0]), int(H * focus[1]), int(W * reach)
+    for i in range(rad, 0, -3):
+        a = int(255 * (1 - i / rad))
+        md.ellipse([cx - i, cy - i, cx + i, cy + i], fill=a)
+    return mask
+
+
+def _texture(base: Image.Image, kind: str, focus) -> None:
+    if kind == "plain":
+        return
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    faint = kind == "grid-faint"
+    alpha = 10 if faint else 18
+    col = (*GREEN, alpha)
+    step = 48
+
+    if kind in ("grid", "grid-faint"):
+        for x in range(0, W, step):
+            od.line([(x, 0), (x, H)], fill=col, width=1)
+        for y in range(0, H, step):
+            od.line([(0, y), (W, y)], fill=col, width=1)
+    elif kind == "dots":
+        r = 2
+        for x in range(0, W, step):
+            for y in range(0, H, step):
+                od.ellipse([x - r, y - r, x + r, y + r], fill=(*GREEN, 26))
+    elif kind == "diagonal":
+        gap = 56
+        for x in range(-H, W, gap):
+            od.line([(x, 0), (x + H, H)], fill=col, width=1)
+
+    mask = _radial_mask(focus=focus[:2], reach=0.6)
+    faded = Image.composite(overlay, Image.new("RGBA", (W, H), (0, 0, 0, 0)), mask)
+    base.alpha_composite(faded)
+
+
+def _glow(base: Image.Image, fx: float, fy: float, color) -> None:
+    size = 600
+    grad = ImageOps.invert(Image.radial_gradient("L")).resize((size, size))
+    alpha = grad.point(lambda p: int(p * 0.28))
+    layer = Image.new("RGBA", (size, size), (*color, 255))
+    glow = Image.composite(layer, Image.new("RGBA", (size, size), (0, 0, 0, 0)), alpha)
+    x = int(fx * W - size / 2)
+    y = int(fy * H - size / 2)
+    base.alpha_composite(glow, (x, y))
+
+
+def _watermark(base: Image.Image) -> None:
+    """Large, faint icon mark bleeding off the right edge."""
+    mark = Image.open(_LOGO_MARK).convert("RGBA")
+    target_h = 520
+    scale = target_h / mark.height
+    mark = mark.resize((int(mark.width * scale), target_h))
+    # Knock the opacity way down.
+    a = mark.split()[3].point(lambda p: int(p * 0.10))
+    mark.putalpha(a)
+    base.alpha_composite(mark, (W - mark.width + 120, (H - mark.height) // 2 - 30))
+
+
+# ---------------------------------------------------------------------------
+# Text helpers
+# ---------------------------------------------------------------------------
+def _wrap(draw, text: str, font, max_w: int) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        if draw.textlength(trial, font=font) <= max_w:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _draw_tracked(draw, xy, text: str, font, fill, tracking: int) -> float:
+    x, y = xy
+    for ch in text:
+        draw.text((x, y), ch, font=font, fill=fill)
+        x += draw.textlength(ch, font=font) + tracking
+    return x - tracking
+
+
+def _tracked_width(draw, text: str, font, tracking: int) -> float:
+    return sum(draw.textlength(ch, font=font) + tracking for ch in text) - tracking
+
+
+def _place_logo_full(base: Image.Image, x: int, y: int, height: int) -> int:
+    logo = Image.open(_LOGO_FULL).convert("RGBA")
+    scale = height / logo.height
+    logo = logo.resize((int(logo.width * scale), height))
+    base.alpha_composite(logo, (x, y))
+    return logo.width
+
+
+# ---------------------------------------------------------------------------
+# Main render
+# ---------------------------------------------------------------------------
+def render_card(
+    headline: str,
+    subtext: str,
+    out_path: str | Path,
+    kicker: str = "Austin, Texas",
+    highlight: str = "",
+    style: str | None = None,
+    seed: int | None = None,
+) -> tuple[Path, str]:
+    rng = random.Random(seed)
+    if style is None:
+        style = rng.choice(STYLE_NAMES)
+    cfg = STYLES[style]
+
+    img = _vertical_gradient()
+    _glow(img, *cfg["glow"])
+    _texture(img, cfg["texture"], cfg["glow"])
+    if cfg["watermark"]:
+        _watermark(img)
+    draw = ImageDraw.Draw(img)
+
+    f_kicker = _font("Rajdhani-SemiBold.ttf", 30)
+    f_head = _font("Rajdhani-Bold.ttf", 76)
+    f_sub = _font("NunitoSans.ttf", 30)
+    f_domain = _font("Rajdhani-SemiBold.ttf", 28)
+
+    centered = cfg["layout"] == "center"
+    max_w = W - 2 * PAD_X
+    head_lines = _wrap(draw, headline.upper(), f_head, max_w)
+    sub_lines = _wrap(draw, subtext, f_sub, max_w - (0 if centered else 120))
+
+    kicker_h, head_lh, sub_lh = 56, 84, 42
+    group_h = kicker_h + len(head_lines) * head_lh + 24 + len(sub_lines) * sub_lh
+    top = max(92, (H - 150 - group_h) // 2)
+
+    hl_words = (
+        {w.strip(".,!?:;").lower() for w in highlight.split()} if highlight else set()
+    )
+
+    y = top
+    # --- kicker ---
+    if centered:
+        kw = _tracked_width(draw, kicker.upper(), f_kicker, 5)
+        kx = (W - kw) // 2
+        draw.rectangle([(W // 2 - 23, y - 14), (W // 2 + 23, y - 10)], fill=GREEN)
+        _draw_tracked(draw, (kx, y), kicker.upper(), f_kicker, GREEN, 5)
+    else:
+        draw.rectangle([PAD_X, y + 12, PAD_X + 46, y + 16], fill=GREEN)
+        _draw_tracked(draw, (PAD_X + 64, y), kicker.upper(), f_kicker, GREEN, 5)
+    y += kicker_h
+
+    # --- headline (optional green/blue highlight words) ---
+    for line in head_lines:
+        line_w = draw.textlength(line, font=f_head)
+        x = (W - line_w) // 2 if centered else PAD_X
+        for word in line.split(" "):
+            clean = word.strip(".,!?:;").lower()
+            color = cfg["highlight"] if clean and clean in hl_words else WHITE
+            draw.text((x, y), word, font=f_head, fill=color)
+            x += draw.textlength(word + " ", font=f_head)
+        y += head_lh
+
+    # --- subtext ---
+    y += 24
+    for line in sub_lines:
+        line_w = draw.textlength(line, font=f_sub)
+        x = (W - line_w) // 2 if centered else PAD_X
+        draw.text((x, y), line, font=f_sub, fill=MUTED)
+        y += sub_lh
+
+    # --- footer: real logo + domain ---
+    logo_h = 64
+    fy = H - logo_h - 40
+    if centered:
+        # Center the logo at the bottom; no domain (keeps it clean).
+        logo = Image.open(_LOGO_FULL).convert("RGBA")
+        lw = int(logo.width * (logo_h / logo.height))
+        _place_logo_full(img, (W - lw) // 2, fy, logo_h)
+    else:
+        _place_logo_full(img, PAD_X, fy, logo_h)
+        domain = "skyusa.us"
+        dom_w = draw.textlength(domain, font=f_domain)
+        draw.text(
+            (W - PAD_X - dom_w, fy + logo_h // 2 - 16),
+            domain,
+            font=f_domain,
+            fill=MUTED,
+        )
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return out_path, style
+
+
+PHOTO_VARIANTS = ["side", "bottom"]
+
+
+def _photo_overlay(variant: str) -> Image.Image:
+    """Navy gradient overlay that keeps text readable on any photo.
+
+    'side'   -> dark on the left (text left), photo shows on the right.
+    'bottom' -> photo shows up top, darkens toward the bottom (text along base).
+    """
+    navy = (8, 13, 24)
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    if variant == "bottom":
+        for y in range(H):
+            t = (y / (H - 1)) ** 1.4          # weight darkness toward the bottom
+            od.line([(0, y), (W, y)], fill=(*navy, int(30 + (238 - 30) * t)))
+    else:  # side
+        for x in range(W):
+            t = x / (W - 1)
+            od.line([(x, 0), (x, H)], fill=(*navy, int(240 - (240 - 70) * t)))
+        band = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        bd = ImageDraw.Draw(band)
+        for y in range(H - 210, H):
+            t = (y - (H - 210)) / 210
+            bd.line([(0, y), (W, y)], fill=(*navy, int(170 * t)))
+        overlay = Image.alpha_composite(overlay, band)
+    return overlay
+
+
+def render_photo_card(
+    headline: str,
+    subtext: str,
+    photo_path: str | Path,
+    out_path: str | Path,
+    kicker: str = "Austin, Texas",
+    highlight: str = "",
+    accent=None,
+    variant: str | None = None,
+    seed: int | None = None,
+) -> tuple[Path, str]:
+    """Render a card using a topic photo as the backdrop + brand overlay.
+
+    `variant` (side|bottom) and `accent` (green|blue) are randomized when not
+    given, so consecutive photo posts do not look identical. Returns
+    (path, variant_label).
+    """
+    rng = random.Random(seed)
+    if variant is None:
+        variant = rng.choice(PHOTO_VARIANTS)
+    if accent is None:
+        accent = rng.choice([GREEN_SOFT, BLUE])
+
+    photo = Image.open(photo_path).convert("RGB")
+    photo = ImageOps.fit(photo, (W, H), method=Image.LANCZOS)  # cover-crop
+    img = photo.convert("RGBA")
+    img.alpha_composite(_photo_overlay(variant))
+    if variant == "bottom":
+        _glow(img, 0.30, 0.92, accent)
+    else:
+        _glow(img, 0.16, 0.5, accent)
+    draw = ImageDraw.Draw(img)
+
+    f_kicker = _font("Rajdhani-SemiBold.ttf", 30)
+    f_head = _font("Rajdhani-Bold.ttf", 76)
+    f_sub = _font("NunitoSans.ttf", 30)
+    f_domain = _font("Rajdhani-SemiBold.ttf", 28)
+
+    max_w = W - 2 * PAD_X
+    head_lines = _wrap(draw, headline.upper(), f_head, max_w)
+    sub_lines = _wrap(draw, subtext, f_sub, max_w - (120 if variant == "side" else 0))
+
+    kicker_h, head_lh, sub_lh = 56, 84, 42
+    group_h = kicker_h + len(head_lines) * head_lh + 24 + len(sub_lines) * sub_lh
+    logo_h = 64
+    fy = H - logo_h - 40
+
+    if variant == "bottom":
+        # Anchor the text block just above the footer.
+        y = fy - 34 - group_h
+    else:
+        y = max(92, (H - 150 - group_h) // 2)
+
+    draw.rectangle([PAD_X, y + 12, PAD_X + 46, y + 16], fill=accent)
+    _draw_tracked(draw, (PAD_X + 64, y), kicker.upper(), f_kicker, accent, 5)
+    y += kicker_h
+
+    hl_words = (
+        {w.strip(".,!?:;").lower() for w in highlight.split()} if highlight else set()
+    )
+    for line in head_lines:
+        x = PAD_X
+        for word in line.split(" "):
+            clean = word.strip(".,!?:;").lower()
+            color = accent if clean and clean in hl_words else WHITE
+            draw.text((x, y), word, font=f_head, fill=color)
+            x += draw.textlength(word + " ", font=f_head)
+        y += head_lh
+
+    y += 24
+    light = (216, 226, 238)  # brighter than MUTED for readability on photos
+    for line in sub_lines:
+        draw.text((PAD_X, y), line, font=f_sub, fill=light)
+        y += sub_lh
+
+    _place_logo_full(img, PAD_X, fy, logo_h)
+    domain = "skyusa.us"
+    dom_w = draw.textlength(domain, font=f_domain)
+    draw.text((W - PAD_X - dom_w, fy + logo_h // 2 - 16), domain, font=f_domain, fill=light)
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return out_path, f"photo-{variant}"
+
+
+def _clean_body_for_image(post_text: str) -> str:
+    """Drop pure-hashtag lines so the on-image copy stays clean."""
+    kept = [ln for ln in post_text.splitlines() if not ln.strip().startswith("#")]
+    return "\n".join(kept).strip()
+
+
+_LW, _LH = 1200, 630
+
+
+def _landscape_overlay() -> Image.Image:
+    """Navy gradient: dark on the left (text side), photo shows on the right,
+    with a darker band along the bottom for the logo row."""
+    navy = (8, 13, 24)
+    ov = Image.new("RGBA", (_LW, _LH), (0, 0, 0, 0))
+    od = ImageDraw.Draw(ov)
+    for x in range(_LW):
+        t = (x / (_LW - 1)) ** 0.9
+        od.line([(x, 0), (x, _LH)], fill=(*navy, int(245 - (245 - 55) * t)))
+    band = Image.new("RGBA", (_LW, _LH), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(band)
+    for y in range(_LH - 150, _LH):
+        t = (y - (_LH - 150)) / 150
+        bd.line([(0, y), (_LW, y)], fill=(*navy, int(150 * t)))
+    return Image.alpha_composite(ov, band)
+
+
+def render_landscape_card(
+    post_text: str,
+    out_path: str | Path,
+    kicker: str = "SkySystems USA",
+    photo_path: str | Path | None = None,
+    accent=None,
+    headline: str = "",
+    seed: int | None = None,
+) -> Path:
+    """Landscape (1200x630) card: topic photo full-bleed with a left navy
+    overlay, text on the left. Fills the Facebook desktop feed width with no
+    side bars."""
+    rng = random.Random(seed)
+    if accent is None:
+        accent = rng.choice([GREEN_SOFT, BLUE])
+
+    if photo_path:
+        img = ImageOps.fit(
+            Image.open(photo_path).convert("RGB"), (_LW, _LH), method=Image.LANCZOS
+        ).convert("RGBA")
+        img.alpha_composite(_landscape_overlay())
+    else:
+        base = Image.new("RGB", (_LW, _LH), BG_BOTTOM)
+        bd = ImageDraw.Draw(base)
+        for y in range(_LH):
+            t = (y / (_LH - 1)) ** 0.9
+            bd.line([(0, y), (_LW, y)], fill=tuple(
+                round(BG_TOP[i] + (BG_BOTTOM[i] - BG_TOP[i]) * t) for i in range(3)))
+        img = base.convert("RGBA")
+
+    draw = ImageDraw.Draw(img)
+    margin = 72
+    text_w = 660  # left text column; photo shows to its right
+    text_top = 58
+    footer_y = _LH - 84
+    avail_h = (footer_y - 16) - text_top
+    headline = (headline or "").strip()
+    paragraphs = [p for p in _clean_body_for_image(post_text).split("\n") if p.strip()]
+
+    f_kicker = _font("Rajdhani-SemiBold.ttf", 28)
+    kicker_h = 50
+
+    head_lines: list[str] = []
+    f_head = None
+    head_lh = 0
+    if headline:
+        for hs in range(50, 31, -3):
+            f_head = _font("Rajdhani-Bold.ttf", hs)
+            head_lines = _wrap(draw, headline.upper(), f_head, text_w)
+            head_lh = int(hs * 1.04)
+            if len(head_lines) <= 2:
+                break
+    head_block = (len(head_lines) * head_lh + 22) if head_lines else 0
+
+    body_avail = avail_h - kicker_h - head_block
+    # Shrink until it fits; if even the smallest doesn't fit, keep the smallest
+    # (the draw loop below hard-stops before the logo regardless).
+    lh, gap, items = 22, 11, []
+    for size in range(30, 13, -2):
+        cand = _font("NunitoSans.ttf", size)
+        strong = _font("Rajdhani-Bold.ttf", size + 3)
+        clh, cgap = int(size * 1.4), int(size * 0.78)
+        ci, total = _layout_body(draw, paragraphs, text_w, cand, strong, accent, clh, cgap)
+        lh, gap, items = clh, cgap, ci
+        if total <= body_avail:
+            break
+
+    y = text_top
+    draw.rectangle([margin, y + 11, margin + 44, y + 15], fill=accent)
+    _draw_tracked(draw, (margin + 62, y), kicker.upper(), f_kicker, accent, 5)
+    y += kicker_h
+
+    if head_lines and f_head is not None:
+        for ln in head_lines:
+            draw.text((margin, y), ln, font=f_head, fill=WHITE)
+            y += head_lh
+        draw.rectangle([margin, y + 6, margin + 64, y + 10], fill=accent)
+        y += 22
+
+    # Hard stop: never let body text reach the logo row.
+    body_limit = footer_y - 12
+    for kind, payload in items:
+        if kind == "gap":
+            y += payload
+        else:
+            if y + lh > body_limit:
+                break
+            for (seg_text, seg_font, seg_fill, dx) in payload:
+                draw.text((margin + dx, y), seg_text, font=seg_font, fill=seg_fill)
+            y += lh
+
+    logo_h = 52
+    _place_logo_full(img, margin, footer_y, logo_h)
+    f_domain = _font("Rajdhani-SemiBold.ttf", 24)
+    dom_w = draw.textlength("skyusa.us", font=f_domain)
+    draw.text((_LW - margin - dom_w, footer_y + logo_h // 2 - 13), "skyusa.us",
+              font=f_domain, fill=(216, 226, 238))
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return out_path
+
+
+def _layout_body(draw, paragraphs, text_w, f_body, f_strong, accent, lh, gap):
+    """Lay out the body with hierarchy: numbered lists get an accent number and
+    a hanging indent; "Label:" prefixes get their own accent line. Returns
+    (items, total_height) where each item is ('line', segments) or ('gap', h).
+    A segment is (text, font, fill, dx)."""
+    items: list = []
+    total = 0
+    for pi, para in enumerate(paragraphs):
+        m_list = _LIST_RE.match(para)
+        m_label = _LABEL_RE.match(para)
+        if m_list:
+            num, rest = m_list.group(1), m_list.group(2)
+            numstr = f"{num}."
+            indent = int(draw.textlength(numstr + "  ", font=f_strong))
+            for li, ln in enumerate(_wrap(draw, rest, f_body, text_w - indent)):
+                segs = []
+                if li == 0:
+                    segs.append((numstr, f_strong, accent, 0))
+                segs.append((ln, f_body, WHITE, indent))
+                items.append(("line", segs))
+                total += lh
+        elif m_label:
+            label, rest = m_label.group(1), m_label.group(2)
+            items.append(("line", [(label.upper() + ":", f_strong, accent, 0)]))
+            total += lh
+            for ln in _wrap(draw, rest, f_body, text_w):
+                items.append(("line", [(ln, f_body, WHITE, 0)]))
+                total += lh
+        else:
+            for ln in _wrap(draw, para, f_body, text_w):
+                items.append(("line", [(ln, f_body, WHITE, 0)]))
+                total += lh
+        if pi < len(paragraphs) - 1:
+            items.append(("gap", gap))
+            total += gap
+    return items, total
+
+
+FULLTEXT_VARIANTS = ["banner-top", "banner-bottom"]
+# Square (1:1). Facebook shows square images edge-to-edge in the feed with no
+# side bars (a 4:5 portrait gets a blurred side-fill on desktop), and it looks
+# consistent in the Page photo grid.
+_FW, _FH = 1080, 1080
+
+
+def _portrait_gradient() -> Image.Image:
+    img = Image.new("RGB", (_FW, _FH), BG_BOTTOM)
+    d = ImageDraw.Draw(img)
+    for y in range(_FH):
+        t = (y / (_FH - 1)) ** 0.9
+        d.line([(0, y), (_FW, y)], fill=tuple(
+            round(BG_TOP[i] + (BG_BOTTOM[i] - BG_TOP[i]) * t) for i in range(3)
+        ))
+    return img.convert("RGBA")
+
+
+def _paste_banner(img: Image.Image, photo_path, top: int, height: int, fade: str) -> None:
+    """Paste a photo band and fade it into the navy panel on the `fade` side
+    ('down' = darken toward the bottom, 'up' = darken toward the top)."""
+    photo = ImageOps.fit(
+        Image.open(photo_path).convert("RGB"), (_FW, height), method=Image.LANCZOS
+    ).convert("RGBA")
+    grad = Image.new("RGBA", (_FW, height), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grad)
+    for y in range(height):
+        f = (y / (height - 1)) if fade == "down" else (1 - y / (height - 1))
+        gd.line([(0, y), (_FW, y)], fill=(*BG_TOP, int(255 * (f ** 1.6) * 0.95)))
+    photo.alpha_composite(grad)
+    img.alpha_composite(photo, (0, top))
+
+
+def render_fulltext_card(
+    post_text: str,
+    out_path: str | Path,
+    kicker: str = "SkySystems USA",
+    photo_path: str | Path | None = None,
+    accent=None,
+    variant: str | None = None,
+    seed: int | None = None,
+    headline: str = "",
+) -> Path:
+    """Render the FULL post copy onto a tall portrait card (1080x1350).
+
+    Layout (`variant`) and accent color (green/blue) are randomized when not
+    given, so consecutive posts vary visually. The body text is auto-sized to
+    fit the available panel.
+    """
+    rng = random.Random(seed)
+    if accent is None:
+        accent = rng.choice([GREEN_SOFT, BLUE])
+    if variant is None:
+        variant = rng.choice(FULLTEXT_VARIANTS) if photo_path else "branded"
+
+    margin = 76
+    banner_h = 320
+    img = _portrait_gradient()
+
+    if photo_path and variant == "banner-top":
+        _paste_banner(img, photo_path, 0, banner_h, fade="down")
+        text_top, text_bottom = banner_h + 52, _FH - 150
+        footer_y = _FH - 100
+    elif photo_path and variant == "banner-bottom":
+        _paste_banner(img, photo_path, _FH - banner_h, banner_h, fade="up")
+        footer_y = _FH - banner_h - 96
+        text_top, text_bottom = 96, footer_y - 26
+    else:  # branded (no photo) -- clean navy panel
+        variant = "branded"
+        text_top, text_bottom = 150, _FH - 150
+        footer_y = _FH - 100
+
+    draw = ImageDraw.Draw(img)
+    headline = (headline or "").strip()
+    paragraphs = [p for p in _clean_body_for_image(post_text).split("\n") if p.strip()]
+    text_w = _FW - 2 * margin
+    avail_h = text_bottom - text_top
+    f_kicker = _font("Rajdhani-SemiBold.ttf", 30)
+    kicker_h = 56
+
+    # Headline: Rajdhani Bold, shrink so it fits in at most 2 lines.
+    head_lines: list[str] = []
+    f_head = None
+    head_lh = 0
+    if headline:
+        for hs in range(56, 35, -3):
+            f_head = _font("Rajdhani-Bold.ttf", hs)
+            head_lines = _wrap(draw, headline.upper(), f_head, text_w)
+            head_lh = int(hs * 1.05)
+            if len(head_lines) <= 2:
+                break
+    head_block = (len(head_lines) * head_lh + 30) if head_lines else 0  # + divider
+
+    # Body auto-fit in the remaining space, with hierarchy (lists/labels).
+    body_avail = avail_h - kicker_h - head_block
+    lh, gap, items = 22, 12, []
+    for size in range(34, 19, -2):
+        cand = _font("NunitoSans.ttf", size)
+        strong = _font("Rajdhani-Bold.ttf", size + 3)
+        clh, cgap = int(size * 1.42), int(size * 0.85)
+        cand_items, total = _layout_body(draw, paragraphs, text_w, cand, strong, accent, clh, cgap)
+        lh, gap, items = clh, cgap, cand_items
+        if total <= body_avail:
+            break
+
+    # Kicker.
+    y = text_top
+    draw.rectangle([margin, y + 12, margin + 46, y + 16], fill=accent)
+    _draw_tracked(draw, (margin + 64, y), kicker.upper(), f_kicker, accent, 5)
+    y += kicker_h
+
+    # Headline + accent divider.
+    if head_lines and f_head is not None:
+        for ln in head_lines:
+            draw.text((margin, y), ln, font=f_head, fill=WHITE)
+            y += head_lh
+        draw.rectangle([margin, y + 8, margin + 72, y + 12], fill=accent)
+        y += 30
+
+    # Body with hierarchy. Hard stop so text never reaches the logo row.
+    body_limit = footer_y - 14
+    for kind, payload in items:
+        if kind == "gap":
+            y += payload
+        else:
+            if y + lh > body_limit:
+                break
+            for (seg_text, seg_font, seg_fill, dx) in payload:
+                draw.text((margin + dx, y), seg_text, font=seg_font, fill=seg_fill)
+            y += lh
+
+    logo_h = 60
+    _place_logo_full(img, margin, footer_y, logo_h)
+    f_domain = _font("Rajdhani-SemiBold.ttf", 26)
+    dom_w = draw.textlength("skyusa.us", font=f_domain)
+    draw.text((_FW - margin - dom_w, footer_y + logo_h // 2 - 14), "skyusa.us",
+              font=f_domain, fill=MUTED)
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return out_path
+
+
+if __name__ == "__main__":
+    # Render one sample of every style into a single contact sheet for review.
+    samples = [
+        ("Phishing Red Flags Your Team Should Know", "Three quick tells that "
+         "stop a breach before it starts.", "Threat of the Week", "Phishing"),
+        ("U.S. Dedication. European Depth.", "Austin plus Germany means someone "
+         "is always awake. Genuine 24/7 support.", "Follow the Sun", "European Depth"),
+        ("Enterprise Security for Small Business", "Robust protection without "
+         "the enterprise price tag. On purpose.", "Our Mission", "Small Business"),
+        ("CJIS-Compliant Body Cam Storage", "Audit-ready, ransomware-resilient "
+         "storage for public safety.", "Public Safety", "Body Cam"),
+        ("Backups Are Not a Recovery Plan", "If you have never tested a restore, "
+         "you do not have a backup.", "Backup & DR", "Recovery"),
+    ]
+    out_dir = _ASSETS / "style_previews"
+    rows = []
+    for name, (hl, sub, kick, high) in zip(STYLE_NAMES, samples):
+        p, _ = render_card(hl, sub, out_dir / f"{name}.png", kicker=kick,
+                           highlight=high, style=name)
+        rows.append(Image.open(p))
+        print("rendered", name)
+    # Stack into one tall contact sheet.
+    sheet = Image.new("RGB", (W, H * len(rows) + 20 * (len(rows) - 1)), (5, 8, 13))
+    yy = 0
+    for r in rows:
+        sheet.paste(r, (0, yy))
+        yy += H + 20
+    sheet.save(_ASSETS / "style_previews" / "_contact_sheet.png")
+    print("wrote contact sheet")

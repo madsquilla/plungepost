@@ -1,0 +1,30 @@
+# Secrets -- never commit
+.env
+
+# Runtime state -- never commit (so pulls don't clobber the server's live data).
+# themes.json IS tracked (it's config); the queues/settings are runtime.
+data/pending.json
+data/approved.json
+data/history.json
+data/settings.json
+
+# Generated runtime artifacts (regenerated each run)
+data/dry_runs/
+data/cards/
+assets/style_previews/
+
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db

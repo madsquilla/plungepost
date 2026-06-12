@@ -1,0 +1,44 @@
+# SkySystems USA Facebook Auto-Poster
+#
+# Two ways to run the same image:
+#
+#   dashboard  -- a long-running web UI for reviewing/approving/publishing posts
+#                 from your browser (http://localhost:8080). Start with:
+#                     docker compose up -d dashboard
+#
+#   poster     -- the run-once batch job (generate / publish-approved), meant to
+#                 be triggered on a schedule. Run on demand with:
+#                     docker compose run --rm poster --mode stage --dry-run
+#                     docker compose run --rm poster --mode publish-approved
+#
+# Secrets come from a local .env file (never committed). On Unraid, set the same
+# variables in the container template instead.
+
+services:
+  dashboard:
+    build: .
+    image: skysystems-poster:latest
+    container_name: skysystems-dashboard
+    restart: unless-stopped
+    env_file:
+      - .env
+    # Run the Flask dashboard instead of the batch entrypoint.
+    entrypoint: ["python", "src/webapp.py"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+  poster:
+    build: .
+    image: skysystems-poster:latest
+    container_name: skysystems-poster
+    restart: "no"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    # Default command if none is given on the CLI (override per run).
+    command: ["--mode", "stage"]
