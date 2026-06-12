@@ -445,6 +445,85 @@ def _landscape_overlay() -> Image.Image:
     return Image.alpha_composite(ov, band)
 
 
+LANDSCAPE_LAYOUTS = ["overlay", "split"]
+
+
+def _brand_tone(img: Image.Image, accent) -> Image.Image:
+    """Grade a photo toward the brand palette so stock shots look art-directed
+    and cohesive (navy shadows, cool highlights, accent-tinted mids) rather
+    than like a random stock image."""
+    g = ImageOps.autocontrast(ImageOps.grayscale(img), cutoff=1)
+    shadow = (7, 14, 26)
+    high = (226, 234, 245)
+    base_mid = (40, 64, 92)
+    mid = tuple(int(accent[i] * 0.45 + base_mid[i] * 0.55) for i in range(3))
+    duo = ImageOps.colorize(g, black=shadow, white=high, mid=mid).convert("RGB")
+    return Image.blend(img.convert("RGB"), duo, 0.80)
+
+
+def _navy_gradient(w: int, h: int) -> Image.Image:
+    base = Image.new("RGB", (w, h), BG_BOTTOM)
+    d = ImageDraw.Draw(base)
+    for y in range(h):
+        t = (y / (h - 1)) ** 0.9
+        d.line([(0, y), (w, y)], fill=tuple(
+            round(BG_TOP[i] + (BG_BOTTOM[i] - BG_TOP[i]) * t) for i in range(3)))
+    return base.convert("RGBA")
+
+
+def _draw_text_block(draw, x, col_w, text_top, body_limit, kicker, headline,
+                     paragraphs, accent, head_max=50):
+    """Draw kicker + headline + accent rule + hierarchical body within a column,
+    auto-sized to fit between text_top and body_limit."""
+    f_kicker = _font("Rajdhani-SemiBold.ttf", 28)
+    kicker_h = 50
+    avail_h = body_limit - text_top
+    headline = (headline or "").strip()
+
+    head_lines: list[str] = []
+    f_head = None
+    head_lh = 0
+    if headline:
+        for hs in range(head_max, 31, -3):
+            f_head = _font("Rajdhani-Bold.ttf", hs)
+            head_lines = _wrap(draw, headline.upper(), f_head, col_w)
+            head_lh = int(hs * 1.04)
+            if len(head_lines) <= 2:
+                break
+    head_block = (len(head_lines) * head_lh + 22) if head_lines else 0
+
+    body_avail = avail_h - kicker_h - head_block
+    lh, gap, items = 22, 11, []
+    for size in range(30, 13, -2):
+        cand = _font("NunitoSans.ttf", size)
+        strong = _font("Rajdhani-Bold.ttf", size + 3)
+        clh, cgap = int(size * 1.4), int(size * 0.78)
+        ci, total = _layout_body(draw, paragraphs, col_w, cand, strong, accent, clh, cgap)
+        lh, gap, items = clh, cgap, ci
+        if total <= body_avail:
+            break
+
+    y = text_top
+    draw.rectangle([x, y + 11, x + 44, y + 15], fill=accent)
+    _draw_tracked(draw, (x + 62, y), kicker.upper(), f_kicker, accent, 5)
+    y += kicker_h
+    if head_lines and f_head is not None:
+        for ln in head_lines:
+            draw.text((x, y), ln, font=f_head, fill=WHITE)
+            y += head_lh
+        draw.rectangle([x, y + 6, x + 64, y + 10], fill=accent)
+        y += 22
+    for kind, payload in items:
+        if kind == "gap":
+            y += payload
+        else:
+            if y + lh > body_limit:
+                break
+            for (seg_text, seg_font, seg_fill, dx) in payload:
+                draw.text((x + dx, y), seg_text, font=seg_font, fill=seg_fill)
+            y += lh
+
+
 def render_landscape_card(
     post_text: str,
     out_path: str | Path,
@@ -453,95 +532,68 @@ def render_landscape_card(
     accent=None,
     headline: str = "",
     seed: int | None = None,
+    layout: str | None = None,
 ) -> Path:
-    """Landscape (1200x630) card: topic photo full-bleed with a left navy
-    overlay, text on the left. Fills the Facebook desktop feed width with no
-    side bars."""
+    """Landscape (1200x630) card. Two art-directed layouts, chosen at random:
+    'overlay' (photo full-bleed, brand-graded, text on a left scrim) and
+    'split' (editorial: navy text panel + brand-graded photo). Both grade the
+    photo to the brand palette so the feed reads like a campaign."""
     rng = random.Random(seed)
     if accent is None:
         accent = rng.choice([GREEN_SOFT, BLUE])
-
-    if photo_path:
-        img = ImageOps.fit(
-            Image.open(photo_path).convert("RGB"), (_LW, _LH), method=Image.LANCZOS
-        ).convert("RGBA")
-        img.alpha_composite(_landscape_overlay())
-    else:
-        base = Image.new("RGB", (_LW, _LH), BG_BOTTOM)
-        bd = ImageDraw.Draw(base)
-        for y in range(_LH):
-            t = (y / (_LH - 1)) ** 0.9
-            bd.line([(0, y), (_LW, y)], fill=tuple(
-                round(BG_TOP[i] + (BG_BOTTOM[i] - BG_TOP[i]) * t) for i in range(3)))
-        img = base.convert("RGBA")
-
-    draw = ImageDraw.Draw(img)
-    margin = 72
-    text_w = 660  # left text column; photo shows to its right
-    text_top = 58
-    footer_y = _LH - 84
-    avail_h = (footer_y - 16) - text_top
-    headline = (headline or "").strip()
     paragraphs = [p for p in _clean_body_for_image(post_text).split("\n") if p.strip()]
+    headline = (headline or "").strip()
+    footer_y = _LH - 84
+    if layout is None:
+        layout = rng.choice(LANDSCAPE_LAYOUTS) if photo_path else "overlay"
 
-    f_kicker = _font("Rajdhani-SemiBold.ttf", 28)
-    kicker_h = 50
-
-    head_lines: list[str] = []
-    f_head = None
-    head_lh = 0
-    if headline:
-        for hs in range(50, 31, -3):
-            f_head = _font("Rajdhani-Bold.ttf", hs)
-            head_lines = _wrap(draw, headline.upper(), f_head, text_w)
-            head_lh = int(hs * 1.04)
-            if len(head_lines) <= 2:
-                break
-    head_block = (len(head_lines) * head_lh + 22) if head_lines else 0
-
-    body_avail = avail_h - kicker_h - head_block
-    # Shrink until it fits; if even the smallest doesn't fit, keep the smallest
-    # (the draw loop below hard-stops before the logo regardless).
-    lh, gap, items = 22, 11, []
-    for size in range(30, 13, -2):
-        cand = _font("NunitoSans.ttf", size)
-        strong = _font("Rajdhani-Bold.ttf", size + 3)
-        clh, cgap = int(size * 1.4), int(size * 0.78)
-        ci, total = _layout_body(draw, paragraphs, text_w, cand, strong, accent, clh, cgap)
-        lh, gap, items = clh, cgap, ci
-        if total <= body_avail:
-            break
-
-    y = text_top
-    draw.rectangle([margin, y + 11, margin + 44, y + 15], fill=accent)
-    _draw_tracked(draw, (margin + 62, y), kicker.upper(), f_kicker, accent, 5)
-    y += kicker_h
-
-    if head_lines and f_head is not None:
-        for ln in head_lines:
-            draw.text((margin, y), ln, font=f_head, fill=WHITE)
-            y += head_lh
-        draw.rectangle([margin, y + 6, margin + 64, y + 10], fill=accent)
-        y += 22
-
-    # Hard stop: never let body text reach the logo row.
-    body_limit = footer_y - 12
-    for kind, payload in items:
-        if kind == "gap":
-            y += payload
+    if layout == "split" and photo_path:
+        panel_w = 556
+        img = _navy_gradient(_LW, _LH)
+        photo = _brand_tone(
+            ImageOps.fit(Image.open(photo_path).convert("RGB"),
+                         (_LW - panel_w, _LH), method=Image.LANCZOS), accent
+        ).convert("RGBA")
+        img.alpha_composite(photo, (panel_w, 0))
+        # faint arrow-mark watermark in the panel
+        try:
+            mk = Image.open(_LOGO_MARK).convert("RGBA")
+            th = 380
+            mk = mk.resize((int(mk.width * th / mk.height), th))
+            a = mk.split()[3].point(lambda p: int(p * 0.06))
+            mk.putalpha(a)
+            img.alpha_composite(mk, (-70, _LH - mk.height + 50))
+        except Exception:
+            pass
+        # soft navy fade from the panel into the photo, plus an accent seam
+        fade = Image.new("RGBA", (170, _LH), (0, 0, 0, 0))
+        fd = ImageDraw.Draw(fade)
+        for xx in range(170):
+            a = int(205 * (1 - xx / 169) ** 1.5)
+            fd.line([(xx, 0), (xx, _LH)], fill=(*BG_BOTTOM, a))
+        img.alpha_composite(fade, (panel_w, 0))
+        draw = ImageDraw.Draw(img)
+        draw.rectangle([panel_w - 4, 0, panel_w, _LH], fill=accent)
+        _draw_text_block(draw, 56, panel_w - 112, 56, footer_y - 12,
+                         kicker, headline, paragraphs, accent, head_max=46)
+        _place_logo_full(img, 56, footer_y, 48)
+    else:
+        if photo_path:
+            img = _brand_tone(
+                ImageOps.fit(Image.open(photo_path).convert("RGB"),
+                             (_LW, _LH), method=Image.LANCZOS), accent
+            ).convert("RGBA")
+            img.alpha_composite(_landscape_overlay())
         else:
-            if y + lh > body_limit:
-                break
-            for (seg_text, seg_font, seg_fill, dx) in payload:
-                draw.text((margin + dx, y), seg_text, font=seg_font, fill=seg_fill)
-            y += lh
-
-    logo_h = 52
-    _place_logo_full(img, margin, footer_y, logo_h)
-    f_domain = _font("Rajdhani-SemiBold.ttf", 24)
-    dom_w = draw.textlength("skyusa.us", font=f_domain)
-    draw.text((_LW - margin - dom_w, footer_y + logo_h // 2 - 13), "skyusa.us",
-              font=f_domain, fill=(216, 226, 238))
+            img = _navy_gradient(_LW, _LH)
+        draw = ImageDraw.Draw(img)
+        _draw_text_block(draw, 72, 660, 58, footer_y - 12,
+                         kicker, headline, paragraphs, accent)
+        _place_logo_full(img, 72, footer_y, 52)
+        f_domain = _font("Rajdhani-SemiBold.ttf", 24)
+        dom_w = draw.textlength("skyusa.us", font=f_domain)
+        draw.text((_LW - 72 - dom_w, footer_y + 52 // 2 - 13), "skyusa.us",
+                  font=f_domain, fill=(216, 226, 238))
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
