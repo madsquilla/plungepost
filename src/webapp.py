@@ -299,6 +299,29 @@ def discard(item_id):
     return redirect(url_for("index"))
 
 
+@app.route("/clear-pending", methods=["POST"])
+def clear_pending():
+    with _LOCK:
+        items = store.read_pending()
+        for it in items:
+            _delete_card(it)
+        store.write_pending([])
+        flash(f"Cleared {len(items)} post(s) from review.", "ok")
+    return redirect(url_for("index"))
+
+
+@app.route("/clear-scheduled", methods=["POST"])
+def clear_scheduled():
+    with _LOCK:
+        approved = store.read_approved()
+        scheduled = [a for a in approved if a.get("scheduled_at")]
+        for it in scheduled:
+            _delete_card(it)
+        store.write_approved([a for a in approved if not a.get("scheduled_at")])
+        flash(f"Cleared {len(scheduled)} scheduled post(s).", "ok")
+    return redirect(url_for("index"))
+
+
 @app.route("/schedule/<item_id>", methods=["POST"])
 def schedule(item_id):
     when = (request.form.get("when") or "").strip()
@@ -502,6 +525,8 @@ TEMPLATE = r"""
   .btn.danger{background:#fff;border-color:#f0c4cc;color:#c23a52;}
   .btn.danger:hover{background:#fdecee;border-color:#e7a8b3;}
   .btn:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;}
+  .btn.sm{padding:6px 12px;font-size:12px;}
+  .sec form{margin:0;}
 
   /* toggle + days */
   .toggle{display:flex;align-items:center;gap:9px;margin-top:6px;}
@@ -644,7 +669,8 @@ TEMPLATE = r"""
       </div>
 
       {% if scheduled %}
-      <div class="sec" id="scheduled"><h2>Scheduled</h2><span class="count">{{ scheduled|length }}</span><span class="ln"></span></div>
+      <div class="sec" id="scheduled"><h2>Scheduled</h2><span class="count">{{ scheduled|length }}</span><span class="ln"></span>
+        <form method="post" action="{{ url_for('clear_scheduled') }}" onsubmit="return confirm('Delete ALL scheduled posts? This cannot be undone.')"><button class="btn danger sm">Delete all</button></form></div>
       {% for p in scheduled %}{{ render_post(p, "scheduled", meta_ready, now_local) }}{% endfor %}
       {% endif %}
 
@@ -652,7 +678,8 @@ TEMPLATE = r"""
       {% if not ready %}<div class="empty">Nothing approved yet. Approve posts from review, or create one above.</div>{% endif %}
       {% for p in ready %}{{ render_post(p, "approved", meta_ready, now_local) }}{% endfor %}
 
-      <div class="sec" id="review"><h2>In review</h2><span class="count">{{ pending|length }}</span><span class="ln"></span></div>
+      <div class="sec" id="review"><h2>In review</h2><span class="count">{{ pending|length }}</span><span class="ln"></span>
+        {% if pending %}<form method="post" action="{{ url_for('clear_pending') }}" onsubmit="return confirm('Delete ALL posts in review? This cannot be undone.')"><button class="btn danger sm">Delete all</button></form>{% endif %}</div>
       {% if not pending %}<div class="empty">Queue is empty. Create a post above to get started.</div>{% endif %}
       {% for p in pending %}{{ render_post(p, "pending", meta_ready, now_local) }}{% endfor %}
 
