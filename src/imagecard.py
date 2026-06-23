@@ -714,53 +714,255 @@ def render_editorial(post_text, out_path, kicker, headline, accent, photo_path, 
     return "editorial"
 
 
-# Map post format -> primary template. Different content gets different design.
-_FORMAT_TEMPLATE = {
-    "stat-led": "stat",
-    "listicle": "checklist", "how-to": "checklist", "quick-tip": "checklist",
-    "one-bold-idea": "statement", "question-led": "statement",
-    "myth-reality": "statement", "comparison": "statement",
-    "scenario": "editorial", "human-angle": "split",
+def _footer_bar(img, draw, margin, bar_h=76):
+    """Navy footer strip (used by light / color templates so the logo reads)."""
+    draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
+    _place_logo_full(img, margin, _LH - bar_h + (bar_h - 42) // 2, 42)
+    fd = _font("Rajdhani-SemiBold.ttf", 23)
+    dw = draw.textlength("skyusa.us", font=fd)
+    draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 22) // 2),
+              "skyusa.us", font=fd, fill=(150, 166, 182))
+
+
+def render_light_statement(post_text, out_path, kicker, headline, accent, seed=None):
+    """Light paper background, big dark headline -- a bright counterpart to the
+    navy 'statement'."""
+    img = Image.new("RGB", (_LW, _LH), PAPER).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, 9, _LH], fill=accent)
+    margin = 88
+    _kicker_tab(draw, margin, 72, kicker, accent)
+    y = 152
+    headline = (headline or "").strip().upper()
+    fh = _font("Rajdhani-Bold.ttf", 98)
+    hl, head_lh = [headline], 98
+    for hs in range(98, 53, -6):
+        fh = _font("Rajdhani-Bold.ttf", hs)
+        hl = _wrap(draw, headline, fh, _LW - 2 * margin - 40)
+        head_lh = int(hs * 1.0)
+        if len(hl) <= 3:
+            break
+    for ln in hl:
+        draw.text((margin, y), ln, font=fh, fill=INK)
+        y += head_lh
+    draw.rectangle([margin, y + 12, margin + 92, y + 20], fill=accent)
+    y += 44
+    fs = _font("NunitoSans.ttf", 26)
+    for ln in _wrap(draw, _lead_sentence(post_text), fs, _LW - 2 * margin - 40)[:3]:
+        draw.text((margin, y), ln, font=fs, fill=(84, 98, 112))
+        y += 38
+    _footer_bar(img, draw, margin)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return "light-statement"
+
+
+def render_bold_color(post_text, out_path, kicker, headline, accent, seed=None):
+    """Full brand-color block, white type -- a punchy scroll-stopper."""
+    deep = tuple(max(0, int(c * 0.72)) for c in accent)
+    base = Image.new("RGB", (_LW, _LH), accent)
+    d0 = ImageDraw.Draw(base)
+    for y in range(_LH):
+        t = y / (_LH - 1)
+        d0.line([(0, y), (_LW, y)],
+                fill=tuple(round(accent[i] + (deep[i] - accent[i]) * t) for i in range(3)))
+    img = base.convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    margin = 88
+    fk = _font("Rajdhani-SemiBold.ttf", 24)
+    _draw_tracked(draw, (margin, 78), (kicker or "").upper(), fk, (255, 255, 255), 5)
+    y = 154
+    headline = (headline or "").strip().upper()
+    fh = _font("Rajdhani-Bold.ttf", 100)
+    hl, head_lh = [headline], 100
+    for hs in range(100, 55, -6):
+        fh = _font("Rajdhani-Bold.ttf", hs)
+        hl = _wrap(draw, headline, fh, _LW - 2 * margin)
+        head_lh = int(hs * 1.0)
+        if len(hl) <= 3:
+            break
+    for ln in hl:
+        draw.text((margin, y), ln, font=fh, fill=(255, 255, 255))
+        y += head_lh
+    draw.rectangle([margin, y + 12, margin + 92, y + 20], fill=(255, 255, 255))
+    y += 44
+    fs = _font("NunitoSans.ttf", 26)
+    for ln in _wrap(draw, _lead_sentence(post_text), fs, _LW - 2 * margin)[:2]:
+        draw.text((margin, y), ln, font=fs, fill=(238, 244, 250))
+        y += 38
+    _footer_bar(img, draw, margin)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return "bold-color"
+
+
+def render_two_block(post_text, out_path, kicker, headline, accent, seed=None):
+    """Two stacked tone blocks (e.g. Myth / Reality, Before / After)."""
+    img = Image.new("RGB", (_LW, _LH), NAVY_DEEP).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    paras = [p.strip() for p in _clean_body_for_image(post_text).split("\n") if p.strip()]
+
+    def _split(p):
+        m = re.match(r"^([A-Za-z][A-Za-z ]{1,16}):\s*(.*)", p or "")
+        return (m.group(1).upper(), m.group(2)) if m else (None, p or "")
+
+    b1 = paras[0] if paras else ""
+    b2 = paras[1] if len(paras) > 1 else b1
+    l1, t1 = _split(b1)
+    l2, t2 = _split(b2)
+    l1 = l1 or "THE PROBLEM"
+    l2 = l2 or "THE FIX"
+    half = _LH // 2
+    draw.rectangle([0, 0, _LW, half], fill=(30, 43, 57))
+    bot = tuple(int(accent[i] * 0.28 + NAVY_DEEP[i] * 0.72) for i in range(3))
+    draw.rectangle([0, half, _LW, _LH], fill=bot)
+    draw.rectangle([0, half - 3, _LW, half + 3], fill=accent)
+    margin = 88
+    fl = _font("Rajdhani-Bold.ttf", 30)
+    ft = _font("NunitoSans.ttf", 25)
+    draw.text((margin, 50), l1, font=fl, fill=(150, 164, 178))
+    yy = 98
+    for ln in _wrap(draw, t1, ft, _LW - 2 * margin)[:3]:
+        draw.text((margin, yy), ln, font=ft, fill=(214, 224, 234))
+        yy += 34
+    draw.text((margin, half + 36), l2, font=fl, fill=accent)
+    yy = half + 84
+    for ln in _wrap(draw, t2, ft, _LW - 2 * margin - 220)[:3]:
+        draw.text((margin, yy), ln, font=ft, fill=WHITE)
+        yy += 34
+    _place_logo_full(img, _LW - margin - 156, _LH - 64, 42)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return "two-block"
+
+
+def render_band(post_text, out_path, kicker, headline, accent, photo_path, seed=None):
+    """Brand-toned photo on top, solid navy band with text on the bottom."""
+    ph_h = 330
+    img = _navy_gradient(_LW, _LH)
+    photo = _brand_tone(ImageOps.fit(Image.open(photo_path).convert("RGB"),
+                                     (_LW, ph_h), method=Image.LANCZOS), accent).convert("RGBA")
+    fade = Image.new("RGBA", (_LW, ph_h), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(fade)
+    for y in range(ph_h):
+        t = max(0.0, (y - (ph_h - 110)) / 110)
+        fd.line([(0, y), (_LW, y)], fill=(*NAVY_DEEP, int(230 * (t ** 1.4))))
+    photo.alpha_composite(fade)
+    img.alpha_composite(photo, (0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, ph_h, _LW, ph_h + 4], fill=accent)
+    margin = 80
+    ty = ph_h + 34
+    _kicker_tab(draw, margin, ty, kicker, accent)
+    ty += 56
+    fh = _font("Rajdhani-Bold.ttf", 46)
+    for ln in _wrap(draw, (headline or "").upper(), fh, _LW - 2 * margin)[:2]:
+        draw.text((margin, ty), ln, font=fh, fill=WHITE)
+        ty += 48
+    _footer_navy(img, draw, margin)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return "band"
+
+
+def render_quote(post_text, out_path, kicker, headline, accent, seed=None):
+    """Pull-quote: accent bar + large statement, attributed to the brand."""
+    img = _navy_gradient(_LW, _LH)
+    draw = ImageDraw.Draw(img)
+    margin = 96
+    q = (headline or "").strip() or _lead_sentence(post_text)
+    fh = _font("Rajdhani-Bold.ttf", 70)
+    hl, head_lh = [q.upper()], 74
+    for hs in range(70, 41, -5):
+        fh = _font("Rajdhani-Bold.ttf", hs)
+        hl = _wrap(draw, q.upper(), fh, _LW - margin - 150)
+        head_lh = int(hs * 1.06)
+        if len(hl) <= 4:
+            break
+    block_h = len(hl) * head_lh
+    top = max(120, (_LH - 150 - block_h) // 2)
+    draw.rectangle([margin, top + 4, margin + 7, top + block_h - 4], fill=accent)
+    y = top
+    for ln in hl:
+        draw.text((margin + 34, y), ln, font=fh, fill=WHITE)
+        y += head_lh
+    fk = _font("Rajdhani-SemiBold.ttf", 24)
+    _draw_tracked(draw, (margin + 34, y + 14), (kicker or "SkySystems").upper(),
+                  fk, accent, 4)
+    _footer_navy(img, draw, margin)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_path, "PNG")
+    return "quote"
+
+
+# Each post format maps to a POOL of fitting designs; the dispatcher rotates
+# through them (avoiding the few most-recently used) so the feed stays varied.
+_PHOTO_TEMPLATES = {"editorial", "split", "overlay", "band"}
+_FORMAT_POOL = {
+    "stat-led": ["stat", "bold-color", "statement"],
+    "listicle": ["checklist", "band", "statement", "editorial"],
+    "how-to": ["checklist", "band", "statement"],
+    "quick-tip": ["checklist", "bold-color", "statement", "editorial"],
+    "one-bold-idea": ["statement", "bold-color", "quote", "editorial"],
+    "question-led": ["statement", "quote", "light-statement", "editorial"],
+    "myth-reality": ["two-block", "statement", "split"],
+    "comparison": ["two-block", "band", "statement", "split"],
+    "scenario": ["editorial", "split", "quote", "overlay"],
+    "human-angle": ["quote", "overlay", "editorial", "light-statement", "split"],
 }
+_DEFAULT_PHOTO = ["editorial", "split", "overlay", "band", "quote"]
+_DEFAULT_TEXT = ["statement", "light-statement", "bold-color", "quote"]
 
 
 def render_post_graphic(post_text, out_path, kicker="", headline="",
-                        format_id="", photo_path=None, accent=None, seed=None):
-    """Pick a template that fits the post's content and render it. Returns the
-    template name used (also serves as image_style)."""
+                        format_id="", photo_path=None, accent=None, seed=None,
+                        avoid=None):
+    """Pick a fitting template (rotating, avoiding recent ones) and render it.
+    Returns the template name used (also stored as image_style)."""
     rng = random.Random(seed)
     if accent is None:
         accent = rng.choice([GREEN_SOFT, BLUE])
     headline = (headline or "").strip()
-
-    t = _FORMAT_TEMPLATE.get(format_id or "")
+    avoid = set(avoid or [])
     has_list = bool(_list_items(post_text))
     has_stat = _first_stat(post_text, headline) is not None
 
-    if t == "stat" and not has_stat:
-        t = "checklist" if has_list else "statement"
-    if t == "checklist" and not has_list:
-        t = "statement"
-    if t in ("editorial", "split") and not photo_path:
-        t = "checklist" if has_list else "statement"
-    if t is None:
-        t = (rng.choice(["editorial", "split", "overlay"]) if photo_path
-             else ("checklist" if has_list else "statement"))
-    # a little cross-variety so the same format is not always identical
-    if photo_path and t in ("statement",) and rng.random() < 0.28:
-        t = rng.choice(["editorial", "split"])
-    if not photo_path and t in ("editorial", "split", "overlay"):
-        t = "statement"
+    pool = list(_FORMAT_POOL.get(format_id or "", []))
+    if not pool:
+        pool = list(_DEFAULT_PHOTO if photo_path else _DEFAULT_TEXT)
+    valid = []
+    for t in pool:
+        if t in _PHOTO_TEMPLATES and not photo_path:
+            continue
+        if t == "checklist" and not has_list:
+            continue
+        if t == "stat" and not has_stat:
+            continue
+        valid.append(t)
+    if not valid:
+        valid = (["checklist"] if has_list else
+                 ["stat"] if has_stat else ["statement"])
+    fresh = [t for t in valid if t not in avoid]
+    t = rng.choice(fresh or valid)
 
     if t == "statement":
         return render_statement(post_text, out_path, kicker, headline, accent, seed)
+    if t == "light-statement":
+        return render_light_statement(post_text, out_path, kicker, headline, accent, seed)
+    if t == "bold-color":
+        return render_bold_color(post_text, out_path, kicker, headline, accent, seed)
     if t == "stat":
         return render_stat(post_text, out_path, kicker, headline, accent, seed)
     if t == "checklist":
         return render_checklist(post_text, out_path, kicker, headline, accent, seed)
+    if t == "two-block":
+        return render_two_block(post_text, out_path, kicker, headline, accent, seed)
+    if t == "quote":
+        return render_quote(post_text, out_path, kicker, headline, accent, seed)
     if t == "editorial":
         return render_editorial(post_text, out_path, kicker, headline, accent, photo_path, seed)
-    # split / overlay reuse the landscape renderer
+    if t == "band":
+        return render_band(post_text, out_path, kicker, headline, accent, photo_path, seed)
     render_landscape_card(post_text, out_path, kicker=kicker, photo_path=photo_path,
                           accent=accent, headline=headline, seed=seed, layout=t)
     return t

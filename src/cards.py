@@ -9,6 +9,7 @@ from pathlib import Path
 
 import images
 import imagecard
+import store
 
 logger = logging.getLogger("skysystems.cards")
 
@@ -28,12 +29,19 @@ def build_card(item: dict) -> dict:
     try:
         src_photo = CARDS_DIR / f"_src_{item['id']}.jpg"
         photo = images.fetch_stock_photo(query, src_photo)
-        # Pick a template that fits the post's content (statement / stat /
-        # checklist / editorial / split / overlay) instead of one fixed layout.
+        # Avoid the few most-recently-used designs so the feed keeps rotating.
+        try:
+            recent = store.read_pending()[-3:] + list(reversed(store.read_history()))[:3]
+            avoid = {r.get("image_style") for r in recent if r.get("image_style")}
+        except Exception:
+            avoid = set()
+        # Pick a fitting template (statement / stat / checklist / editorial /
+        # split / overlay / band / quote / two-block / bold-color / light) and
+        # render it, rotating away from recent designs.
         item["image_style"] = imagecard.render_post_graphic(
             item["post_text"], out, kicker=kicker,
             headline=item.get("image_headline", ""),
-            format_id=item.get("format", ""), photo_path=photo,
+            format_id=item.get("format", ""), photo_path=photo, avoid=avoid,
         )
         if photo is not None:
             try:
