@@ -375,6 +375,38 @@ def clear_scheduled():
     return _back()
 
 
+@app.route("/schedule-all", methods=["POST"])
+def schedule_all():
+    """Assign schedule slots to every currently-ready post across the auto-pilot
+    days/times (skipping slots already taken)."""
+    with _LOCK:
+        approved = store.read_approved()
+        ready = [a for a in approved if not a.get("scheduled_at")]
+        s = store.read_settings()
+        taken = {a["scheduled_at"] for a in approved if a.get("scheduled_at")}
+        slots = _next_slots(s, datetime.now(), len(ready), taken)
+        if not slots:
+            flash("Set auto-pilot days and times on Overview first.", "err")
+            return _back()
+        for it, slot in zip(ready, slots):
+            it["scheduled_at"] = slot
+        store.write_approved(approved)
+        flash(f"Scheduled {min(len(slots), len(ready))} post(s) across your days/times.", "ok")
+    return _back()
+
+
+@app.route("/clear-approved", methods=["POST"])
+def clear_approved():
+    with _LOCK:
+        approved = store.read_approved()
+        ready = [a for a in approved if not a.get("scheduled_at")]
+        for it in ready:
+            _delete_card(it)
+        store.write_approved([a for a in approved if a.get("scheduled_at")])
+        flash(f"Cleared {len(ready)} ready post(s).", "ok")
+    return _back()
+
+
 @app.route("/schedule/<item_id>", methods=["POST"])
 def schedule(item_id):
     when = (request.form.get("when") or "").strip()
@@ -733,7 +765,9 @@ TEMPLATE = r"""
       {% endif %}
 
       {% if page == 'approved' %}
-      <div class="sec"><h2>Ready to publish</h2><span class="count">{{ ready|length }}</span><span class="ln"></span></div>
+      <div class="sec"><h2>Ready to publish</h2><span class="count">{{ ready|length }}</span><span class="ln"></span>
+        {% if ready %}<form method="post" action="{{ url_for('schedule_all') }}" onsubmit="return confirm('Schedule all {{ ready|length }} ready post(s) across your auto-pilot days/times?')"><button class="btn primary sm">Schedule all</button></form>
+        <form method="post" action="{{ url_for('clear_approved') }}" onsubmit="return confirm('Delete ALL ready posts? This cannot be undone.')"><button class="btn danger sm">Delete all</button></form>{% endif %}</div>
       {% if not ready %}<div class="empty">Nothing approved yet. Approve posts from <a href="{{ url_for('review') }}" style="color:var(--green);">In Review</a>.</div>{% endif %}
       {% for p in ready %}{{ render_post(p, "approved", meta_ready, now_local) }}{% endfor %}
       {% endif %}
