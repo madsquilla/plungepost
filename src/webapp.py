@@ -18,7 +18,7 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -92,6 +92,37 @@ def _delete_card(item) -> None:
             pass
 
 
+def _next_slots(settings, start, count, taken):
+    """Return up to `count` future schedule times (ISO, minute precision) on the
+    selected auto-pilot days/times, skipping ones already in `taken`. Each post
+    lands on its own corresponding day/time slot."""
+    days = settings.get("auto_pilot_days") or []
+    times = sorted(t for t in (settings.get("auto_pilot_times") or []) if t)
+    out = []
+    if not days or not times:
+        return out
+    day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    for _ in range(370):
+        if DAYS[day.weekday()] in days:
+            for t in times:
+                try:
+                    hh, mm = (int(x) for x in t.split(":"))
+                except ValueError:
+                    continue
+                dt = day.replace(hour=hh, minute=mm)
+                if dt <= start:
+                    continue
+                key = dt.isoformat(timespec="minutes")
+                if key in taken:
+                    continue
+                taken.add(key)
+                out.append(key)
+                if len(out) >= count:
+                    return out
+        day += timedelta(days=1)
+    return out
+
+
 def _do_publish(item) -> str:
     """Publish one item and append it to history. Returns the FB post id."""
     post_id = pub.publish_post(item)
@@ -131,46 +162,6 @@ def _scheduler_tick() -> None:
             remaining.append(it)
         if changed:
             store.write_approved(remaining)
-
-        # Daily auto-pilot: publish one approved post per configured time slot,
-        # on the selected days. Multiple times per day are supported.
-        s = store.read_settings()
-        if s.get("auto_pilot_enabled") and DAYS[now.weekday()] in s.get("auto_pilot_days", []):
-            today = now.strftime("%Y-%m-%d")
-            fired = list(s.get("fired_slots", []))
-            fired_set = set(fired)
-            new_fired = False
-            for t in s.get("auto_pilot_times", []):
-                slot = f"{today} {t}"
-                if slot in fired_set:
-                    continue
-                try:
-                    hh, mm = (int(x) for x in t.split(":"))
-                except ValueError:
-                    continue
-                if (now.hour, now.minute) < (hh, mm):
-                    continue
-                approved = store.read_approved()
-                pool = sorted(
-                    [a for a in approved if not a.get("scheduled_at")],
-                    key=lambda i: i.get("generated_at", ""),
-                )
-                if pool:
-                    item = pool[0]
-                    try:
-                        pid = _do_publish(item)
-                        logger.info("Auto-pilot published %s at %s (fb=%s)", item["id"], t, pid)
-                        store.write_approved([a for a in approved if a.get("id") != item["id"]])
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("Auto-pilot publish failed: %s", exc)
-                else:
-                    logger.info("Auto-pilot %s: nothing approved to publish.", t)
-                fired.append(slot)
-                fired_set.add(slot)
-                new_fired = True
-            if new_fired:
-                s["fired_slots"] = fired[-80:]  # keep recent slots only
-                store.write_settings(s)
 
 
 def _scheduler_loop() -> None:
@@ -295,10 +286,17 @@ def approve(item_id):
     with _LOCK:
         item, rest = _pop(store.read_pending(), item_id)
         if item:
+            approved = store.read_approved()
             item["status"] = "approved"
+            s = store.read_settings()
+            if s.get("auto_pilot_enabled"):
+                taken = {a["scheduled_at"] for a in approved if a.get("scheduled_at")}
+                slots = _next_slots(s, datetime.now(), 1, taken)
+                if slots:
+                    item["scheduled_at"] = slots[0]
             store.write_pending(rest)
-            store.write_approved(store.read_approved() + [item])
-            flash("Approved.", "ok")
+            store.write_approved(approved + [item])
+            flash("Approved and scheduled." if item.get("scheduled_at") else "Approved.", "ok")
     return _back()
 
 
@@ -335,11 +333,22 @@ def discard(item_id):
 def approve_all():
     with _LOCK:
         pending = store.read_pending()
-        for it in pending:
+        approved = store.read_approved()
+        s = store.read_settings()
+        slots = []
+        if s.get("auto_pilot_enabled"):
+            taken = {a["scheduled_at"] for a in approved if a.get("scheduled_at")}
+            slots = _next_slots(s, datetime.now(), len(pending), taken)
+        for i, it in enumerate(pending):
             it["status"] = "approved"
-        store.write_approved(store.read_approved() + pending)
+            if i < len(slots):
+                it["scheduled_at"] = slots[i]
+        store.write_approved(approved + pending)
         store.write_pending([])
-        flash(f"Approved {len(pending)} post(s).", "ok")
+        msg = f"Approved {len(pending)} post(s)."
+        if slots:
+            msg += f" Auto-scheduled {len(slots)} across your days/times."
+        flash(msg, "ok")
     return _back()
 
 
@@ -691,7 +700,7 @@ TEMPLATE = r"""
         </div>
         <div class="panel full">
           <h3>Auto-pilot schedule</h3>
-          <p class="hint">Auto-publish approved posts on the days and times you choose. Pulls from your approved queue, so keep a few approved.</p>
+          <p class="hint">When on, approving posts auto-schedules them across these days and times &mdash; one post per slot, each on its own day. They appear on the Scheduled tab and publish automatically at their time. (Turn off to approve into Ready without scheduling.)</p>
           <form method="post" action="{{ url_for('settings_save') }}">
             <div class="toggle">
               <input type="checkbox" id="ap" name="auto_pilot_enabled" {{ 'checked' if settings.auto_pilot_enabled }}>
