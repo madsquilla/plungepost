@@ -299,7 +299,7 @@ def brand(name):
 
 @app.route("/generate", methods=["POST"])
 def generate():
-    count = max(1, min(int(request.form.get("count", 1)), 10))
+    count = max(1, min(int(request.form.get("count", 1)), 50))
     if not _start_generation("random", count):
         flash("Already generating -- hang tight.", "err")
     return _back()
@@ -808,7 +808,7 @@ TEMPLATE = r"""
           <form class="genform" method="post" action="{{ url_for('generate') }}">
             <label>How many?</label>
             <div class="inline">
-              <div><input type="number" name="count" value="1" min="1" max="10"></div>
+              <div><input type="number" name="count" value="1" min="1" max="50"></div>
               <button class="btn primary" type="submit">Generate</button>
             </div>
           </form>
