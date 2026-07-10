@@ -29,7 +29,7 @@ except ImportError:
     load_dotenv = None
 
 from flask import (
-    Flask, abort, flash, redirect, render_template_string, request,
+    Flask, abort, flash, jsonify, redirect, render_template_string, request,
     send_from_directory, url_for,
 )
 
@@ -121,6 +121,58 @@ def _next_slots(settings, start, count, taken):
                     return out
         day += timedelta(days=1)
     return out
+
+
+# Background-generation progress (shown live in the dashboard overlay).
+_GEN = {"active": False, "message": "Idle", "done": 0, "total": 0, "error": False}
+
+
+def _run_generation(kind, count, topic=None, fmt_id=None):
+    """Generate posts in a background thread, updating _GEN so the UI can show
+    live progress. One post at a time so dedup + progress both work."""
+    try:
+        for i in range(count):
+            with _LOCK:
+                _GEN.update(message=f"Writing post {i + 1} of {count}", total=count)
+            if kind == "custom":
+                item = gen.generate_custom(
+                    topic, fmt=(gen.get_format(fmt_id) if fmt_id else None))
+            else:
+                item = gen.generate_post()
+            with _LOCK:
+                _GEN["message"] = f"Designing the graphic ({i + 1} of {count})"
+            cards.build_card(item)
+            with _LOCK:
+                store.append_pending(item)
+                _GEN["done"] = i + 1
+        with _LOCK:
+            _GEN["message"] = "Done"
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Background generation failed")
+        m = str(exc)
+        low = m.lower()
+        if "credit balance" in low:
+            m = "Anthropic API is out of credits. Add credits at console.anthropic.com."
+        elif "authentication" in low or "x-api-key" in low or "401" in low:
+            m = "Anthropic API key was rejected. Check ANTHROPIC_API_KEY in .env."
+        else:
+            m = "Generation failed: " + m[:120]
+        with _LOCK:
+            _GEN.update(error=True, message=m)
+    finally:
+        with _LOCK:
+            _GEN["active"] = False
+
+
+def _start_generation(kind, count, topic=None, fmt_id=None):
+    """Atomically claim the generator; returns False if one is already running."""
+    with _LOCK:
+        if _GEN["active"]:
+            return False
+        _GEN.update(active=True, done=0, total=count, message="Starting", error=False)
+    threading.Thread(target=_run_generation,
+                     args=(kind, count, topic, fmt_id), daemon=True).start()
+    return True
 
 
 def _do_publish(item) -> str:
@@ -248,16 +300,8 @@ def brand(name):
 @app.route("/generate", methods=["POST"])
 def generate():
     count = max(1, min(int(request.form.get("count", 1)), 10))
-    try:
-        items = gen.generate_batch(count) if count > 1 else [gen.generate_post()]
-        with _LOCK:
-            for item in items:
-                cards.build_card(item)
-                store.append_pending(item)
-        flash(f"Generated {count} post(s) into review.", "ok")
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Generate failed")
-        flash(f"Generation failed: {exc}", "err")
+    if not _start_generation("random", count):
+        flash("Already generating -- hang tight.", "err")
     return _back()
 
 
@@ -268,17 +312,15 @@ def generate_custom():
     if not topic:
         flash("Type what the post should be about first.", "err")
         return _back()
-    try:
-        fmt = gen.get_format(fmt_id) if fmt_id else None
-        item = gen.generate_custom(topic, fmt=fmt)
-        with _LOCK:
-            cards.build_card(item)
-            store.append_pending(item)
-        flash("Custom post generated into review.", "ok")
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Custom generate failed")
-        flash(f"Custom generation failed: {exc}", "err")
+    if not _start_generation("custom", 1, topic, fmt_id):
+        flash("Already generating -- hang tight.", "err")
     return _back()
+
+
+@app.route("/gen-status")
+def gen_status():
+    with _LOCK:
+        return jsonify(dict(_GEN))
 
 
 @app.route("/approve/<item_id>", methods=["POST"])
@@ -655,6 +697,17 @@ TEMPLATE = r"""
   .empty{color:var(--mut);padding:14px 16px;background:#fff;border:1px dashed var(--bd2);
     border-radius:11px;font-size:13.5px;}
 
+  .gen-overlay{display:none;position:fixed;inset:0;z-index:100;background:rgba(10,16,24,.6);
+    align-items:center;justify-content:center;padding:20px;}
+  .gen-card{background:#0f1b2a;border:1px solid #2a3a4d;border-radius:16px;padding:34px 40px;
+    width:min(420px,92vw);text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.5);}
+  .gen-spin{width:44px;height:44px;margin:0 auto 18px;border-radius:50%;
+    border:4px solid rgba(255,255,255,.14);border-top-color:#2faa46;animation:gspin .8s linear infinite;}
+  @keyframes gspin{to{transform:rotate(360deg);}}
+  .gen-title{color:#fff;font-weight:700;font-size:18px;}
+  .gen-msg{color:#9fb0c0;font-size:14px;margin:6px 0 18px;min-height:18px;}
+  .gen-track{height:9px;background:rgba(255,255,255,.12);border-radius:99px;overflow:hidden;}
+  .gen-bar{height:100%;width:6%;background:linear-gradient(90deg,#2faa46,#4cd674);border-radius:99px;transition:width .45s ease;}
   @media(max-width:1000px){
     .layout{grid-template-columns:1fr;}
     .sidebar{position:sticky;top:0;z-index:30;height:auto;flex-direction:column;
@@ -686,6 +739,15 @@ TEMPLATE = r"""
     .btn{padding:11px 14px;}
   }
 </style></head><body>
+<div id="genOverlay" class="gen-overlay">
+  <div class="gen-card">
+    <div class="gen-spin"></div>
+    <div class="gen-title">Creating your post</div>
+    <div id="genMsg" class="gen-msg">Starting</div>
+    <div class="gen-track"><div id="genBar" class="gen-bar"></div></div>
+    <button id="genClose" class="btn outline" style="display:none;margin-top:18px;" onclick="document.getElementById('genOverlay').style.display='none';">Dismiss</button>
+  </div>
+</div>
 <div class="layout">
   <aside class="sidebar">
     <div class="side-logo"><img src="{{ url_for('brand', name='logo_full.png') }}" alt="SkySystems USA"></div>
@@ -726,7 +788,7 @@ TEMPLATE = r"""
         <div class="panel">
           <h3>Custom post</h3>
           <p class="hint">Holidays, promotions, events, announcements. Describe it and we write an on-brand post + graphic.</p>
-          <form method="post" action="{{ url_for('generate_custom') }}">
+          <form class="genform" method="post" action="{{ url_for('generate_custom') }}">
             <textarea name="topic" placeholder="e.g. Memorial Day: honoring those who served. Office closed Monday.  —or—  Summer offer: free security assessment for new Austin clients booked in June."></textarea>
             <div class="inline" style="margin-top:12px;">
               <div>
@@ -743,7 +805,7 @@ TEMPLATE = r"""
         <div class="panel">
           <h3>From theme rotation</h3>
           <p class="hint">Generate on-brand posts across the content themes.</p>
-          <form method="post" action="{{ url_for('generate') }}">
+          <form class="genform" method="post" action="{{ url_for('generate') }}">
             <label>How many?</label>
             <div class="inline">
               <div><input type="number" name="count" value="1" min="1" max="10"></div>
@@ -808,6 +870,39 @@ TEMPLATE = r"""
     </div>
   </main>
 </div>
+<script>
+(function(){
+  var ov=document.getElementById('genOverlay'),bar=document.getElementById('genBar'),msg=document.getElementById('genMsg');
+  var was=false;
+  function poll(){
+    fetch('{{ url_for("gen_status") }}',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
+      if(s.active){
+        was=true; ov.style.display='flex';
+        var lbl=s.message||'Working'; if(s.total>1){lbl+=' · '+s.done+' of '+s.total+' done';}
+        msg.textContent=lbl;
+        var pct=s.total?Math.round(s.done/s.total*100):8; if(!pct)pct=8;
+        bar.style.width=Math.max(6,pct)+'%';
+        setTimeout(poll,700);
+      } else if(was){
+        if(s.error){
+          msg.textContent=s.message; msg.style.color='#ff9aa8';
+          bar.style.background='#d6455f'; bar.style.width='100%';
+          document.getElementById('genClose').style.display='inline-flex';
+          return;
+        }
+        msg.textContent='Done'; bar.style.width='100%';
+        setTimeout(function(){window.location.href='{{ url_for("review") }}';},350);
+      } else {
+        ov.style.display='none'; setTimeout(poll,2000);
+      }
+    }).catch(function(){setTimeout(poll,2500);});
+  }
+  document.querySelectorAll('form.genform').forEach(function(f){
+    f.addEventListener('submit',function(){ov.style.display='flex';msg.textContent='Starting';bar.style.width='6%';});
+  });
+  poll();
+})();
+</script>
 </body></html>
 """
 
