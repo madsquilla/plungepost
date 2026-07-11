@@ -41,21 +41,49 @@ PAD_X = 80
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _FONT_DIR = _ASSETS / "fonts"
-# Packaged fallbacks (used only if the current account has no logo yet).
+# Packaged asset (SkySystems logo) -- ONLY ever used for the SkySystems tenant,
+# never as a cross-brand fallback. Accounts without a logo get a wordmark of
+# their OWN name so one client's branding never appears on another's card.
 _LOGO_FULL = _ASSETS / "logo_full.png"
 _LOGO_MARK = _ASSETS / "logo_mark.png"
 
 
-def _logo_full_path() -> Path:
-    """The current account's full logo, falling back to the packaged one."""
+def _logo_image() -> Image.Image:
+    """The current account's logo as an RGBA image. If the account has no logo
+    file, render a clean wordmark of ITS OWN name (never the packaged Sky logo).
+    """
     p = tenants.logo_full()
-    return p if p.exists() else _LOGO_FULL
+    if p.exists():
+        return Image.open(p).convert("RGBA")
+    return _wordmark_image()
 
 
-def _logo_mark_path() -> Path:
-    """The current account's icon mark, falling back to the packaged one."""
+def _logo_mark_image() -> Image.Image:
     p = tenants.logo_mark()
-    return p if p.exists() else _LOGO_MARK
+    if p.exists():
+        return Image.open(p).convert("RGBA")
+    return _wordmark_image()
+
+
+def _wordmark_image() -> Image.Image:
+    """A text logo of the account name in its design font + brand accent,
+    lightened so it reads on the navy footer. Transparent background."""
+    try:
+        name = (tenants.account().get("name") or "").strip()
+    except Exception:
+        name = ""
+    name = name or "Brand"
+    accent = tenants.accent_colors()[0]
+    color = _lighten(accent, 0.30)
+    file, weight = _design()["head"]
+    font = _face(file, 84, weight)
+    tmp = Image.new("RGBA", (10, 10))
+    bbox = ImageDraw.Draw(tmp).textbbox((0, 0), name, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    pad = 14
+    img = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text((pad - bbox[0], pad - bbox[1]), name, font=font, fill=color)
+    return img
 
 
 def _domain() -> str:
@@ -296,7 +324,7 @@ def _glow(base: Image.Image, fx: float, fy: float, color) -> None:
 
 def _watermark(base: Image.Image) -> None:
     """Large, faint icon mark bleeding off the right edge."""
-    mark = Image.open(_logo_mark_path()).convert("RGBA")
+    mark = _logo_mark_image()
     target_h = 520
     scale = target_h / mark.height
     mark = mark.resize((int(mark.width * scale), target_h))
@@ -339,7 +367,7 @@ def _tracked_width(draw, text: str, font, tracking: int) -> float:
 
 
 def _place_logo_full(base: Image.Image, x: int, y: int, height: int) -> int:
-    logo = Image.open(_logo_full_path()).convert("RGBA")
+    logo = _logo_image()
     scale = height / logo.height
     logo = logo.resize((int(logo.width * scale), height))
     base.alpha_composite(logo, (x, y))
@@ -350,7 +378,7 @@ def _logo_is_opaque() -> bool:
     """True if the account logo has a baked-in (non-transparent) background, so
     it would render as an ugly rectangle on a photo/dark footer."""
     try:
-        a = Image.open(_logo_full_path()).convert("RGBA").split()[3]
+        a = _logo_image().split()[3]
         return a.getextrema()[0] > 210      # min alpha high -> no transparency
     except Exception:
         return False
@@ -361,7 +389,7 @@ def _place_logo_footer(base: Image.Image, x: int, y: int, height: int,
     """Place the logo in a footer. If the logo has its own opaque background it
     is set on a clean rounded white chip so it reads as intentional rather than
     a stray dark box; transparent logos are placed directly."""
-    logo = Image.open(_logo_full_path()).convert("RGBA")
+    logo = _logo_image()
     scale = height / logo.height
     logo = logo.resize((max(1, int(logo.width * scale)), height))
     if _logo_is_opaque():
@@ -456,7 +484,7 @@ def render_card(
     fy = H - logo_h - 40
     if centered:
         # Center the logo at the bottom; no domain (keeps it clean).
-        logo = Image.open(_logo_full_path()).convert("RGBA")
+        logo = _logo_image()
         lw = int(logo.width * (logo_h / logo.height))
         _place_logo_full(img, (W - lw) // 2, fy, logo_h)
     else:
@@ -826,7 +854,7 @@ def render_statement(post_text, out_path, kicker, headline, accent, seed=None):
     """Bold typographic poster, no photo: kicker tab + huge headline + lead."""
     img = _premium_bg(accent, (seed or 0))
     try:
-        mk = Image.open(_logo_mark_path()).convert("RGBA")
+        mk = _logo_mark_image()
         th = 600
         mk = mk.resize((int(mk.width * th / mk.height), th))
         a = mk.split()[3].point(lambda p: int(p * 0.07))
@@ -1488,7 +1516,7 @@ def render_landscape_card(
         img.alpha_composite(photo, (panel_w, 0))
         # faint arrow-mark watermark in the panel
         try:
-            mk = Image.open(_logo_mark_path()).convert("RGBA")
+            mk = _logo_mark_image()
             th = 380
             mk = mk.resize((int(mk.width * th / mk.height), th))
             a = mk.split()[3].point(lambda p: int(p * 0.06))
