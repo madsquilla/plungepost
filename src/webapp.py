@@ -108,7 +108,7 @@ def _migrate_legacy_account() -> None:
         content.DEFAULT_BRAND, themes,
         fb_page_id=os.environ.get("META_PAGE_ID", ""),
         fb_token=os.environ.get("META_PAGE_ACCESS_TOKEN", ""),
-        accent="#2ecc71", accent2="#2b6cc4",
+        accent="#2ecc71", accent2="#2b6cc4", style="dark",
         logo_bytes=logo_bytes, mark_bytes=mark_bytes,
     )
     # Move any existing queues/cards into the new tenant's data dir.

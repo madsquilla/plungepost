@@ -280,7 +280,18 @@ _SYSTEM = (
     "those pages. Produce a JSON object that captures the brand accurately for a "
     "social-media post generator. Use ONLY facts supported by the text; do not "
     "invent services, stats, or claims. If a field is unknown, use an empty "
-    "string or empty list. Never use em dashes."
+    "string or empty list. Never use em dashes.\n\n"
+    "CRITICAL: match the voice and topics to what this business actually is and "
+    "who its customers are. A local consumer or home service (cleaning, "
+    "landscaping, plumbing, dental, salon, restaurant) should sound warm, "
+    "friendly, neighborly, and benefit-focused for everyday customers, and its "
+    "themes should be about real customer concerns (a clean home, saving time, "
+    "trust, local pride, before/after results, seasonal needs). Do NOT write it "
+    "like a B2B software or tech company: avoid words like 'solution', "
+    "'platform', 'leverage', 'built a tool', 'onboarding', 'deploy', and other "
+    "corporate/SaaS jargon unless the business genuinely is a tech company. "
+    "Write the voice_rules and themes so a reader would immediately feel this is "
+    "THAT kind of business."
 )
 
 
@@ -468,7 +479,7 @@ def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str =
     slug = tenants.create_tenant(
         name, name, base, brand, themes,
         fb_page_id=fb_page_id, fb_token=fb_token,
-        accent=accent, accent2=accent2,
+        accent=accent, accent2=accent2, style="bright",
         logo_bytes=logo_bytes,
     )
     logger.info("Onboarded new account '%s' (%s) with %d themes",

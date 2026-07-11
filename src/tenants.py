@@ -147,6 +147,12 @@ def website(slug: str | None = None) -> str:
     return account(slug).get("website", "").strip()
 
 
+def style(slug: str | None = None) -> str:
+    """Card visual style: 'bright' (light/clean, default for new accounts) or
+    'dark' (navy premium). Missing -> 'dark' to preserve the original look."""
+    return (account(slug).get("style") or "dark").lower()
+
+
 def domain(slug: str | None = None) -> str:
     """Bare domain for the card footer, e.g. 'skyusa.us'."""
     w = website(slug)
@@ -182,16 +188,22 @@ def fb_creds(slug: str | None = None) -> tuple[str, str]:
 
 def create_tenant(slug, name, website, brand_dict, themes_list, *,
                   fb_page_id="", fb_token="", accent=_DEFAULT_ACCENT,
-                  accent2=_DEFAULT_ACCENT2, logo_bytes=None, mark_bytes=None,
-                  seed_data_from: Path | None = None) -> str:
+                  accent2=_DEFAULT_ACCENT2, style="dark", logo_bytes=None,
+                  mark_bytes=None, seed_data_from: Path | None = None) -> str:
     """Create a new account. Returns its slug."""
     slug = slugify(slug or name)
     tdir = TENANTS_DIR / slug
     (tdir / "data" / "cards").mkdir(parents=True, exist_ok=True)
+    # If this account already exists (e.g. re-adding to refresh brand/themes),
+    # keep its saved Facebook credentials when the caller passes blanks, so a
+    # rebuild never wipes a token the user already connected.
+    prev = _read_json(tdir / "account.json", {})
     save_account({
         "name": name, "website": website,
-        "fb_page_id": fb_page_id, "fb_token": fb_token,
+        "fb_page_id": fb_page_id or prev.get("fb_page_id", ""),
+        "fb_token": fb_token or prev.get("fb_token", ""),
         "accent": accent, "accent2": accent2,
+        "style": style,
     }, slug)
     save_brand(brand_dict or {}, slug)
     save_themes(themes_list or [], slug)

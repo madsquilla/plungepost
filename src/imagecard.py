@@ -63,6 +63,15 @@ def _domain() -> str:
     return tenants.domain()
 
 
+def _style() -> str:
+    """Visual style for the current account: 'bright' (light, clean, for most
+    consumer/service brands) or 'dark' (navy premium, for tech/security brands)."""
+    try:
+        return tenants.style()
+    except Exception:
+        return "dark"
+
+
 def _accent_pick(rng) -> tuple[int, int, int]:
     """Pick one of the current account's two accent colors."""
     return rng.choice(tenants.accent_colors())
@@ -480,9 +489,17 @@ LANDSCAPE_LAYOUTS = ["overlay", "split"]
 
 def _brand_tone(img: Image.Image, accent) -> Image.Image:
     """Grade a photo toward the brand palette so stock shots look art-directed
-    and cohesive (navy shadows, cool highlights, accent-tinted mids) rather
-    than like a random stock image."""
+    and cohesive rather than like a random stock image. 'bright' accounts get a
+    clean, airy, natural grade; 'dark' accounts get the navy-premium grade."""
     g = ImageOps.autocontrast(ImageOps.grayscale(img), cutoff=1)
+    if _style() == "bright":
+        # Keep the photo looking real, light and fresh: only a gentle brand wash.
+        shadow = (44, 58, 74)
+        high = (255, 255, 255)
+        base_mid = (182, 200, 216)
+        mid = tuple(int(accent[i] * 0.26 + base_mid[i] * 0.74) for i in range(3))
+        duo = ImageOps.colorize(g, black=shadow, white=high, mid=mid).convert("RGB")
+        return Image.blend(img.convert("RGB"), duo, 0.34)
     shadow = (7, 14, 26)
     high = (226, 234, 245)
     base_mid = (40, 64, 92)
@@ -1143,6 +1160,18 @@ def render_post_graphic(post_text, out_path, kicker="", headline="",
     if not valid:
         valid = (["checklist"] if has_list else
                  ["stat"] if has_stat else ["statement"])
+
+    # Bright accounts (most consumer/service brands) avoid the dark, navy
+    # "premium tech" templates and stick to clean light/photo layouts.
+    if _style() == "bright":
+        BRIGHT_OK = {"light-statement", "checklist", "bold-color", "editorial"}
+        vb = [t for t in valid if t in BRIGHT_OK]
+        if not vb:
+            vb = (["checklist"] if has_list else []) + ["light-statement", "bold-color"]
+            if photo_path:
+                vb.append("editorial")
+        valid = vb
+
     fresh = [t for t in valid if t not in avoid]
     t = rng.choice(fresh or valid)
 
