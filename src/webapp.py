@@ -208,9 +208,12 @@ def _next_slots(settings, start, count, taken):
 _GEN = {"active": False, "message": "Idle", "done": 0, "total": 0, "error": False}
 
 
-def _run_generation(kind, count, topic=None, fmt_id=None):
+def _run_generation(slug, kind, count, topic=None, fmt_id=None):
     """Generate posts in a background thread, updating _GEN so the UI can show
     live progress. One post at a time so dedup + progress both work."""
+    # A new thread has no tenant context; bind it to the account the request
+    # was for, or generation would silently target the first account instead.
+    tenants.set_current(slug)
     try:
         for i in range(count):
             with _LOCK:
@@ -251,8 +254,9 @@ def _start_generation(kind, count, topic=None, fmt_id=None):
         if _GEN["active"]:
             return False
         _GEN.update(active=True, done=0, total=count, message="Starting", error=False)
+    slug = tenants.current()   # capture the request's account for the worker
     threading.Thread(target=_run_generation,
-                     args=(kind, count, topic, fmt_id), daemon=True).start()
+                     args=(slug, kind, count, topic, fmt_id), daemon=True).start()
     return True
 
 
