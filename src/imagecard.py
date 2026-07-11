@@ -120,6 +120,31 @@ def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
     return f
 
 
+def _nunito(size: int, weight: int = 800) -> ImageFont.FreeTypeFont:
+    """Soft, rounded, humanist headline font (NunitoSans at a heavy weight).
+    Used for 'bright' accounts to read warm and airy instead of industrial."""
+    f = ImageFont.truetype(str(_FONT_DIR / "NunitoSans.ttf"), size)
+    try:
+        f.set_variation_by_axes([weight, 100, size, 500])
+    except Exception:
+        pass
+    return f
+
+
+def _head_font(size: int) -> ImageFont.FreeTypeFont:
+    """Headline face: soft rounded Nunito for bright accounts, hard condensed
+    Rajdhani for dark/tech accounts."""
+    if _style() == "bright":
+        return _nunito(size, 800)
+    return _font("Rajdhani-Bold.ttf", size)
+
+
+def _head_text(text: str) -> str:
+    """Bright accounts keep gentle Title Case; dark accounts shout in caps."""
+    t = (text or "").strip()
+    return t if _style() == "bright" else t.upper()
+
+
 # ---------------------------------------------------------------------------
 # Background, texture, glow
 # ---------------------------------------------------------------------------
@@ -642,8 +667,16 @@ def _list_items(post_text: str) -> list[str]:
 
 
 def _kicker_tab(draw, x, y, label, accent, ink=(255, 255, 255)) -> int:
-    f = _font("Rajdhani-SemiBold.ttf", 23)
+    bright = _style() == "bright"
     label = (label or "").upper()
+    if bright:
+        # Soft rounded pill with a gentle humanist face -- airy, not industrial.
+        f = _nunito(22, 700)
+        w = sum(draw.textlength(c, font=f) + 3 for c in label) - 3
+        draw.rounded_rectangle([x, y, x + int(w) + 34, y + 40], radius=20, fill=accent)
+        _draw_tracked(draw, (x + 17, y + 8), label, f, ink, 3)
+        return y + 40
+    f = _font("Rajdhani-SemiBold.ttf", 23)
     w = sum(draw.textlength(c, font=f) + 4 for c in label) - 4
     draw.rectangle([x, y, x + int(w) + 30, y + 38], fill=accent)
     _draw_tracked(draw, (x + 15, y + 6), label, f, ink, 4)
@@ -740,13 +773,13 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 0, _LW, 8], fill=accent)
     margin = 90
-    fh = _font("Rajdhani-Bold.ttf", 58)
-    hl = _wrap(draw, (headline or "").upper(), fh, _LW - 2 * margin)[:2]
+    fh = _head_font(54 if _style() == "bright" else 58)
+    hl = _wrap(draw, _head_text(headline), fh, _LW - 2 * margin)[:2]
     items = _list_items(post_text)
     if not items:
         items = [s for s in _lead_sentence(post_text).split(". ") if s][:3]
     fi = _font("NunitoSans.ttf", 28)
-    fb = _font("Rajdhani-Bold.ttf", 27)
+    fb = _nunito(27, 800) if _style() == "bright" else _font("Rajdhani-Bold.ttf", 27)
     item_lines = [_wrap(draw, it, fi, _LW - margin - 66 - margin)[:2] for it in items[:4]]
     kicker_h, head_lh = 54, 60
     items_h = sum(max(60, len(ls) * 37 + 16) for ls in item_lines)
@@ -811,15 +844,17 @@ def render_editorial(post_text, out_path, kicker, headline, accent, photo_path, 
         _grain(img, 7)
     draw = ImageDraw.Draw(img)
     margin = 80
-    fh = _font("Rajdhani-Bold.ttf", 66)
-    hl = _wrap(draw, (headline or "").upper(), fh, _LW - 2 * margin)[:3]
+    hsize = 60 if bright else 66
+    fh = _head_font(hsize)
+    hl = _wrap(draw, _head_text(headline), fh, _LW - 2 * margin)[:3]
+    lh = int(hsize * 1.14) if bright else 66
     fy = _LH - 84
-    y = fy - 24 - len(hl) * 66
+    y = fy - 24 - len(hl) * lh
     _kicker_tab(draw, margin, y - 56, kicker, accent)
     if bright:
-        _draw_headline_white(img, margin, y, hl, fh, 66)
+        _draw_headline_white(img, margin, y, hl, fh, lh)
     else:
-        _draw_headline_grad(img, margin, y, hl, fh, 66, accent)
+        _draw_headline_grad(img, margin, y, hl, fh, lh, accent)
     draw = ImageDraw.Draw(img)
     _footer_navy(img, draw, margin)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -844,13 +879,14 @@ def render_light_statement(post_text, out_path, kicker, headline, accent, seed=N
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 0, 9, _LH], fill=accent)
     margin = 90
-    headline = (headline or "").strip().upper()
-    fh = _font("Rajdhani-Bold.ttf", 108)
-    hl, head_lh = [headline], 106
-    for hs in range(108, 57, -6):
-        fh = _font("Rajdhani-Bold.ttf", hs)
+    headline = _head_text(headline)
+    hi_size = 92 if _style() == "bright" else 108
+    fh = _head_font(hi_size)
+    hl, head_lh = [headline], int(hi_size * 1.04)
+    for hs in range(hi_size, 51, -6):
+        fh = _head_font(hs)
         hl = _wrap(draw, headline, fh, _LW - 2 * margin - 20)
-        head_lh = int(hs * 1.0)
+        head_lh = int(hs * 1.12) if _style() == "bright" else int(hs * 1.0)
         if len(hl) <= 4:
             break
     fs = _font("NunitoSans.ttf", 27)
@@ -888,13 +924,14 @@ def render_bold_color(post_text, out_path, kicker, headline, accent, seed=None):
     _grain(img, 9)
     draw = ImageDraw.Draw(img)
     margin = 90
-    headline = (headline or "").strip().upper()
-    fh = _font("Rajdhani-Bold.ttf", 112)
-    hl, head_lh = [headline], 110
-    for hs in range(112, 59, -6):
-        fh = _font("Rajdhani-Bold.ttf", hs)
+    headline = _head_text(headline)
+    hi_size = 94 if _style() == "bright" else 112
+    fh = _head_font(hi_size)
+    hl, head_lh = [headline], int(hi_size * 1.06)
+    for hs in range(hi_size, 53, -6):
+        fh = _head_font(hs)
         hl = _wrap(draw, headline, fh, _LW - 2 * margin)
-        head_lh = int(hs * 1.0)
+        head_lh = int(hs * 1.12) if _style() == "bright" else int(hs * 1.0)
         if len(hl) <= 4:
             break
     fs = _font("NunitoSans.ttf", 27)
