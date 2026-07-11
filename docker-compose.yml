@@ -1,4 +1,4 @@
-# SkySystems USA Facebook Auto-Poster
+# PlungePost
 #
 # Two ways to run the same image:
 #
@@ -17,8 +17,8 @@
 services:
   dashboard:
     build: .
-    image: skysystems-poster:latest
-    container_name: skysystems-dashboard
+    image: plungepost:latest
+    container_name: plungepost-dashboard
     restart: unless-stopped
     env_file:
       - .env
@@ -33,8 +33,8 @@ services:
 
   poster:
     build: .
-    image: skysystems-poster:latest
-    container_name: skysystems-poster
+    image: plungepost:latest
+    container_name: plungepost
     restart: "no"
     env_file:
       - .env

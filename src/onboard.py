@@ -27,12 +27,12 @@ import requests
 
 import tenants
 
-logger = logging.getLogger("skysystems.onboard")
+logger = logging.getLogger("plungepost.onboard")
 
 DEFAULT_MODEL = "claude-opus-4-8"
 MAX_TOKENS = 4096
 REQUEST_TIMEOUT = 20
-_UA = {"User-Agent": "Mozilla/5.0 (compatible; SkySystemsOnboard/1.0)"}
+_UA = {"User-Agent": "Mozilla/5.0 (compatible; PlungePostOnboard/1.0)"}
 
 # Internal-link keywords worth reading beyond the homepage.
 _KEY_PAGES = (

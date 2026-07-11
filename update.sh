@@ -4,8 +4,8 @@
 set -e
 cd "$(dirname "$0")"
 echo "Downloading latest code..."
-curl -sL https://github.com/madsquilla/skysystems-fb-poster/archive/refs/heads/master.tar.gz \
+curl -sL https://github.com/madsquilla/plungepost/archive/refs/heads/master.tar.gz \
   | tar xz --strip-components=1
 echo "Restarting dashboard..."
-docker restart skysystems-dashboard
+docker restart plungepost-dashboard
 echo "Done. Updated to latest and restarted."

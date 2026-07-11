@@ -42,7 +42,7 @@ import generate as gen
 import publish as pub
 import store
 
-logger = logging.getLogger("skysystems")
+logger = logging.getLogger("plungepost")
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _LOG_DIR = _REPO_ROOT / "logs"
@@ -74,7 +74,7 @@ def setup_logging() -> None:
         datefmt="%Y-%m-%dT%H:%M:%S%z",
     )
 
-    root = logging.getLogger("skysystems")
+    root = logging.getLogger("plungepost")
     root.setLevel(logging.INFO)
     root.handlers.clear()
 
@@ -202,8 +202,8 @@ def mode_publish_approved(dry_run: bool) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="skysystems-poster",
-        description="Generate and publish SkySystems USA Facebook posts.",
+        prog="plungepost",
+        description="PlungePost: generate and publish Facebook posts.",
     )
     parser.add_argument(
         "--mode",

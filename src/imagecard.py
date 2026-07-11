@@ -1,7 +1,6 @@
-"""Render on-brand SkySystems USA post cards as PNGs (no browser needed).
+"""Render on-brand post cards as PNGs for the current account (pure Pillow).
 
-Pure-Pillow. Uses the real SkySystems logo (assets/logo_full.png and the icon
-mark assets/logo_mark.png) and rotates across several distinct, coherent
+Uses the current account's logo (with the packaged one as a fallback) and rotates across several distinct, coherent
 layouts so consecutive posts look varied and deliberately designed rather than
 template-stamped.
 
@@ -1173,7 +1172,7 @@ def render_post_graphic(post_text, out_path, kicker="", headline="",
 def render_landscape_card(
     post_text: str,
     out_path: str | Path,
-    kicker: str = "SkySystems USA",
+    kicker: str = "",
     photo_path: str | Path | None = None,
     accent=None,
     headline: str = "",
@@ -1322,7 +1321,7 @@ def _paste_banner(img: Image.Image, photo_path, top: int, height: int, fade: str
 def render_fulltext_card(
     post_text: str,
     out_path: str | Path,
-    kicker: str = "SkySystems USA",
+    kicker: str = "",
     photo_path: str | Path | None = None,
     accent=None,
     variant: str | None = None,

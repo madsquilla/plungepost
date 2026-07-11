@@ -1,4 +1,4 @@
-"""Publish a post to the SkySystems USA Facebook Page via the Graph API.
+"""Publish a post to the current account's Facebook Page via the Graph API.
 
 Public API:
     publish_post(item) -> facebook_post_id
@@ -20,7 +20,7 @@ import tenants
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
-logger = logging.getLogger("skysystems.publish")
+logger = logging.getLogger("plungepost.publish")
 
 GRAPH_API_VERSION = "v21.0"
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"

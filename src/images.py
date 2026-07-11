@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-logger = logging.getLogger("skysystems.images")
+logger = logging.getLogger("plungepost.images")
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
 TIMEOUT = 30

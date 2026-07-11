@@ -30,7 +30,7 @@ from content import (
 )
 from store import recent_topics
 
-logger = logging.getLogger("skysystems.generate")
+logger = logging.getLogger("plungepost.generate")
 
 DEFAULT_MODEL = "claude-opus-4-8"
 # Adaptive-thinking models can spend tokens on internal reasoning, so give the

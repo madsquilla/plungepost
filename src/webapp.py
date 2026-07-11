@@ -1,4 +1,4 @@
-"""Web review dashboard for the SkySystems USA auto-poster.
+"""PlungePost -- the web review dashboard.
 
 Browser UI to generate (random or custom/holiday posts), review, approve,
 schedule, and publish posts -- plus a built-in scheduler that auto-publishes
@@ -46,7 +46,7 @@ _ASSETS_DIR = _REPO_ROOT / "assets"
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("skysystems.web")
+logger = logging.getLogger("plungepost.web")
 
 if load_dotenv is not None:
     load_dotenv(_REPO_ROOT / ".env")
@@ -57,7 +57,7 @@ if hasattr(time, "tzset"):
     time.tzset()
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET", "skysystems-local-dashboard")
+app.secret_key = os.environ.get("FLASK_SECRET", "plungepost-local-dashboard")
 
 # Guards every queue read-modify-write so the web routes and the background
 # scheduler never corrupt the JSON files by writing at the same time.
@@ -735,7 +735,7 @@ TEMPLATE = r"""
 {% endmacro %}
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SkySystems &middot; Post Studio</title>
+<title>PlungePost</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -995,7 +995,7 @@ TEMPLATE = r"""
   <main class="main">
     <div class="topbar">
       <h1>{{ page_title }}</h1>
-      <p class="sub">{{ current_name }} &middot; Post Studio</p>
+      <p class="sub">{{ current_name }} &middot; PlungePost</p>
     </div>
     <div class="content">
       {% with msgs = get_flashed_messages(with_categories=true) %}

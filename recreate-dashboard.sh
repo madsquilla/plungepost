@@ -19,10 +19,10 @@ set -e
 cd "$(dirname "$0")"
 
 echo "Removing old dashboard container (if any)..."
-docker rm -f skysystems-dashboard 2>/dev/null || true
+docker rm -f plungepost-dashboard 2>/dev/null || true
 
 echo "Creating dashboard container..."
-docker run -d --name skysystems-dashboard --restart unless-stopped \
+docker run -d --name plungepost-dashboard --restart unless-stopped \
   --env-file .env \
   -e TZ=America/Chicago \
   -p 8095:8080 \
@@ -33,6 +33,6 @@ docker run -d --name skysystems-dashboard --restart unless-stopped \
   -v "$PWD/tenants":/app/tenants \
   -v "$PWD/logs":/app/logs \
   --entrypoint python \
-  skysystems-poster:latest src/webapp.py
+  plungepost:latest src/webapp.py
 
 echo "Done. Dashboard is up at http://<unraid-ip>:8095"

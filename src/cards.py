@@ -12,7 +12,7 @@ import imagecard
 import store
 import tenants
 
-logger = logging.getLogger("skysystems.cards")
+logger = logging.getLogger("plungepost.cards")
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 

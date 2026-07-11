@@ -1,7 +1,10 @@
-# SkySystems USA Facebook Auto-Poster
+# PlungePost
 
-Generates professional, on-brand social posts for the **SkySystems USA**
-Facebook Page and publishes them on a schedule, **with a human review gate**.
+Multi-account social post studio. Generates professional, on-brand posts and
+branded graphics for each connected business's Facebook Page and publishes
+them on a schedule, **with a human review gate**. Add a new account from the
+dashboard: give it a name and website, and PlungePost reads the site and
+auto-builds the brand voice, content themes, and logo.
 
 It is a **run-once-and-exit** program: it starts, does one job (generate, or
 publish one approved post), and exits. It is meant to be triggered once per day
@@ -58,7 +61,7 @@ to publish, expired token) so a failed scheduled run is visible.
 
 ## 1. Local setup and a first dry-run (Windows)
 
-From the project folder (`skysystems-poster`):
+From the project folder (`plungepost`):
 
 ```powershell
 # Create and activate a virtual environment
@@ -219,14 +222,14 @@ docker compose down                 # stop it
 ## 5. Build the Docker image
 
 ```powershell
-docker build -t skysystems-poster:latest .
+docker build -t plungepost:latest .
 ```
 
 Test the image with a dry-run (mount data/ so output persists):
 
 ```powershell
 docker run --rm --env-file .env -v ${PWD}\data:/app/data -v ${PWD}\tenants:/app/tenants -v ${PWD}\logs:/app/logs `
-  skysystems-poster:latest --mode stage --dry-run
+  plungepost:latest --mode stage --dry-run
 ```
 
 Or via compose:
@@ -246,9 +249,9 @@ The container runs the command and **exits** -- that is by design.
 Either:
 
 - **Private GitHub repo:** push this folder to a private repo, then on Unraid
-  pull it (e.g. into `/mnt/user/appdata/skysystems-poster`), **or**
-- **SMB copy:** copy the whole `skysystems-poster` folder to an Unraid share
-  (e.g. `\\TOWER\appdata\skysystems-poster`) over the network.
+  pull it (e.g. into `/mnt/user/appdata/plungepost`), **or**
+- **SMB copy:** copy the whole `plungepost` folder to an Unraid share
+  (e.g. `\\TOWER\appdata\plungepost`) over the network.
 
 Do **not** copy your `.env` -- secrets go in the container template (step c).
 
@@ -258,11 +261,11 @@ Open the Unraid terminal (or a User Scripts script) and build the image from
 the copied folder:
 
 ```bash
-cd /mnt/user/appdata/skysystems-poster
-docker build -t skysystems-poster:latest .
+cd /mnt/user/appdata/plungepost
+docker build -t plungepost:latest .
 ```
 
-This produces a local image named `skysystems-poster:latest` that Unraid can run.
+This produces a local image named `plungepost:latest` that Unraid can run.
 
 ### c) Set environment variables (NOT in the repo)
 
@@ -272,7 +275,7 @@ Scripts `docker run` below), set these three variables in the template:
 | Variable                 | Value                                            |
 | ------------------------ | ------------------------------------------------ |
 | `ANTHROPIC_API_KEY`      | Your Anthropic API key                           |
-| `META_PAGE_ID`           | Numeric ID of the SkySystems USA Page            |
+| `META_PAGE_ID`           | Numeric ID of your Facebook Page            |
 | `META_PAGE_ACCESS_TOKEN` | Long-lived **Page** access token                 |
 
 ### d) Make `data/` and `tenants/` persistent (so accounts/history survive)
@@ -282,9 +285,9 @@ brand/tokens/cards are not lost when the container is recreated:
 
 | Container path | Host path (example)                              |
 | -------------- | ------------------------------------------------ |
-| `/app/data`    | `/mnt/user/appdata/skysystems-poster/data`       |
-| `/app/tenants` | `/mnt/user/appdata/skysystems-poster/tenants`    |
-| `/app/logs`    | `/mnt/user/appdata/skysystems-poster/logs`       |
+| `/app/data`    | `/mnt/user/appdata/plungepost/data`       |
+| `/app/tenants` | `/mnt/user/appdata/plungepost/tenants`    |
+| `/app/logs`    | `/mnt/user/appdata/plungepost/logs`       |
 
 Without `/app/data`, `history.json` resets every run and dedup stops working.
 Without `/app/tenants`, **every account (including its Facebook Page token,
@@ -304,10 +307,10 @@ docker run --rm \
   -e ANTHROPIC_API_KEY="your-key" \
   -e META_PAGE_ID="your-page-id" \
   -e META_PAGE_ACCESS_TOKEN="your-long-lived-page-token" \
-  -v /mnt/user/appdata/skysystems-poster/data:/app/data \
-  -v /mnt/user/appdata/skysystems-poster/tenants:/app/tenants \
-  -v /mnt/user/appdata/skysystems-poster/logs:/app/logs \
-  skysystems-poster:latest --mode publish-approved
+  -v /mnt/user/appdata/plungepost/data:/app/data \
+  -v /mnt/user/appdata/plungepost/tenants:/app/tenants \
+  -v /mnt/user/appdata/plungepost/logs:/app/logs \
+  plungepost:latest --mode publish-approved
 ```
 
 Cron line for **weekdays at 9:00 AM Central** (set the server TZ to
@@ -331,7 +334,7 @@ A common pattern is **two** scheduled scripts:
 - **Container logs:** Unraid Docker tab -> click the container -> **Logs**.
   A successful publish prints:
   `Published post id=... (facebook id=...) and moved it to history.json.`
-- **File log:** `/mnt/user/appdata/skysystems-poster/logs/poster.log`
+- **File log:** `/mnt/user/appdata/plungepost/logs/poster.log`
   (rotating, kept across runs).
 - A non-zero exit and an `ERROR` line mean something failed (API down, empty
   queue, or an expired token -- the message tells you which).
@@ -344,10 +347,10 @@ The code just consumes `META_PAGE_ACCESS_TOKEN`; you generate it once:
 
 1. In **Meta for Developers**, create an app and add the Pages permissions
    (`pages_manage_posts`, `pages_read_engagement`).
-2. In **Graph API Explorer**, select your app and the SkySystems USA Page,
+2. In **Graph API Explorer**, select your app and your Facebook Page,
    grant those permissions, and generate a **User** token.
 3. Exchange it for a **long-lived user token**, then call `/me/accounts` to get
-   the **long-lived Page token** for the SkySystems USA Page.
+   the **long-lived Page token** for your Facebook Page.
 4. Put that Page token in `META_PAGE_ACCESS_TOKEN`.
 
 If the token expires, `publish-approved` fails clearly with a message telling
@@ -358,7 +361,7 @@ you to regenerate it (Graph error code 190).
 ## Project layout
 
 ```
-skysystems-poster/
+plungepost/
   src/
     main.py        entry point, arg parsing, mode dispatch, logging
     webapp.py      Flask web dashboard (review/approve/publish)
@@ -371,8 +374,8 @@ skysystems-poster/
     content.py     brand facts + system prompt assembly
   assets/
     fonts/         Rajdhani + Nunito Sans (brand fonts)
-    logo_full.png  SkySystems logo (used on cards)
-    logo_mark.png  SkySystems icon mark
+    logo_full.png  packaged fallback logo (accounts store their own)
+    logo_mark.png  packaged fallback icon mark
   data/
     themes.json    rotating content themes (16 seeded)
     pending.json   generated, awaiting your approval
