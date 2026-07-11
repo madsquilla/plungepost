@@ -120,29 +120,111 @@ def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
     return f
 
 
-def _nunito(size: int, weight: int = 800) -> ImageFont.FreeTypeFont:
-    """Soft, rounded, humanist headline font (NunitoSans at a heavy weight).
-    Used for 'bright' accounts to read warm and airy instead of industrial."""
-    f = ImageFont.truetype(str(_FONT_DIR / "NunitoSans.ttf"), size)
-    try:
-        f.set_variation_by_axes([weight, 100, size, 500])
-    except Exception:
-        pass
+# --- font registry: how to weight each (variable) family ----------------------
+# For variable fonts PIL needs the FULL axis vector, in the font's axis order.
+_VAR_AXES = {
+    "Quicksand.ttf": lambda w, size: [w],
+    "SpaceGrotesk.ttf": lambda w, size: [w],
+    "Baloo2.ttf": lambda w, size: [w],
+    # Fraunces axis order: Optical Size, Weight, Softness, Wonky.
+    "Fraunces.ttf": lambda w, size: [min(144, max(9, size)), w, 0, 0],
+    # NunitoSans axis order: Weight, Width, Optical size, YTLC.
+    "NunitoSans.ttf": lambda w, size: [w, 100, min(72, max(6, size)), 500],
+}
+
+
+def _face(file: str, size: int, weight: int | None = 700) -> ImageFont.FreeTypeFont:
+    """Load any bundled face at a size/weight, handling variable-font axes."""
+    f = ImageFont.truetype(str(_FONT_DIR / file), size)
+    setter = _VAR_AXES.get(file)
+    if setter and weight:
+        try:
+            f.set_variation_by_axes(setter(weight, size))
+        except Exception:
+            pass
     return f
 
 
+def _nunito(size: int, weight: int = 800) -> ImageFont.FreeTypeFont:
+    return _face("NunitoSans.ttf", size, weight)
+
+
+# --- per-account design systems ----------------------------------------------
+# Each account renders in ONE coherent identity so no two clients look alike.
+# Dark/tech accounts use 'tech-condensed'; bright accounts are deterministically
+# assigned one of the bright systems by slug (stable per client).
+_DESIGNS = {
+    "tech-condensed": dict(mood="dark",
+        head=("Rajdhani-Bold.ttf", None), kfont=("Rajdhani-SemiBold.ttf", None),
+        case="upper", kicker="tab", align="left", rule="bar", motif="none"),
+    "soft-rounded": dict(mood="bright",
+        head=("Quicksand.ttf", 700), kfont=("Quicksand.ttf", 600),
+        case="title", kicker="pill", align="left", rule="bar", motif="blob"),
+    "friendly-round": dict(mood="bright",
+        head=("Baloo2.ttf", 700), kfont=("Baloo2.ttf", 600),
+        case="title", kicker="pill", align="center", rule="dot", motif="arc"),
+    "elegant-serif": dict(mood="bright",
+        head=("Fraunces.ttf", 600), kfont=("NunitoSans.ttf", 650),
+        case="title", kicker="plain", align="left", rule="long", motif="none"),
+    "bold-impact": dict(mood="bright",
+        head=("Anton.ttf", None), kfont=("SpaceGrotesk.ttf", 600),
+        case="upper", kicker="outline", align="left", rule="none", motif="stripe"),
+    "modern-grotesk": dict(mood="bright",
+        head=("SpaceGrotesk.ttf", 700), kfont=("SpaceGrotesk.ttf", 500),
+        case="title", kicker="underline", align="left", rule="none", motif="corner"),
+}
+_BRIGHT_DESIGNS = ["soft-rounded", "friendly-round", "elegant-serif",
+                   "bold-impact", "modern-grotesk"]
+
+# Exposed for the settings UI (id -> human label).
+DESIGN_LABELS = {
+    "soft-rounded": "Soft & rounded (Quicksand)",
+    "friendly-round": "Friendly & centered (Baloo)",
+    "elegant-serif": "Elegant serif (Fraunces)",
+    "bold-impact": "Bold impact (Anton)",
+    "modern-grotesk": "Modern grotesk (Space Grotesk)",
+    "tech-condensed": "Tech condensed (Rajdhani)",
+}
+
+
+def current_design_id() -> str:
+    """The design id the current account resolves to (auto or explicit)."""
+    d = _design()
+    for k, v in _DESIGNS.items():
+        if v is d:
+            return k
+    return "soft-rounded"
+
+
+def _design() -> dict:
+    """The current account's design system (explicit override, else auto)."""
+    try:
+        acct = tenants.account()
+    except Exception:
+        acct = {}
+    chosen = acct.get("design")
+    if chosen in _DESIGNS:
+        return _DESIGNS[chosen]
+    if _style() == "dark":
+        return _DESIGNS["tech-condensed"]
+    slug = tenants.current()
+    idx = sum(ord(c) for c in slug) % len(_BRIGHT_DESIGNS)
+    return _DESIGNS[_BRIGHT_DESIGNS[idx]]
+
+
 def _head_font(size: int) -> ImageFont.FreeTypeFont:
-    """Headline face: soft rounded Nunito for bright accounts, hard condensed
-    Rajdhani for dark/tech accounts."""
-    if _style() == "bright":
-        return _nunito(size, 800)
-    return _font("Rajdhani-Bold.ttf", size)
+    file, weight = _design()["head"]
+    return _face(file, size, weight)
 
 
 def _head_text(text: str) -> str:
-    """Bright accounts keep gentle Title Case; dark accounts shout in caps."""
     t = (text or "").strip()
-    return t if _style() == "bright" else t.upper()
+    case = _design()["case"]
+    if case == "upper":
+        return t.upper()
+    if case == "title":
+        return t
+    return t
 
 
 # ---------------------------------------------------------------------------
@@ -666,21 +748,70 @@ def _list_items(post_text: str) -> list[str]:
     return items
 
 
-def _kicker_tab(draw, x, y, label, accent, ink=(255, 255, 255)) -> int:
-    bright = _style() == "bright"
+def _kicker_width(draw, label, accent=None) -> int:
+    """Total drawn width of the kicker for the current design (for centering)."""
+    d = _design()
+    kfile, kw = d["kfont"]
+    f = _face(kfile, 22, kw)
     label = (label or "").upper()
-    if bright:
-        # Soft rounded pill with a gentle humanist face -- airy, not industrial.
-        f = _nunito(22, 700)
-        w = sum(draw.textlength(c, font=f) + 3 for c in label) - 3
-        draw.rounded_rectangle([x, y, x + int(w) + 34, y + 40], radius=20, fill=accent)
+    text_w = sum(draw.textlength(c, font=f) + 3 for c in label) - 3
+    pad = {"tab": 30, "pill": 34, "outline": 34, "plain": 0, "underline": 0}
+    return int(text_w) + pad.get(d["kicker"], 0)
+
+
+def _kicker_tab(draw, x, y, label, accent, ink=(255, 255, 255)) -> int:
+    """Draw the kicker in the current design's style: filled tab, rounded pill,
+    outlined pill, plain tracked text, or underlined text."""
+    d = _design()
+    style = d["kicker"]
+    kfile, kw = d["kfont"]
+    f = _face(kfile, 22, kw)
+    label = (label or "").upper()
+    text_w = sum(draw.textlength(c, font=f) + 3 for c in label) - 3
+    if style == "tab":
+        draw.rectangle([x, y, x + int(text_w) + 30, y + 38], fill=accent)
+        _draw_tracked(draw, (x + 15, y + 6), label, f, ink, 3)
+    elif style == "pill":
+        draw.rounded_rectangle([x, y, x + int(text_w) + 34, y + 40], radius=20, fill=accent)
         _draw_tracked(draw, (x + 17, y + 8), label, f, ink, 3)
-        return y + 40
-    f = _font("Rajdhani-SemiBold.ttf", 23)
-    w = sum(draw.textlength(c, font=f) + 4 for c in label) - 4
-    draw.rectangle([x, y, x + int(w) + 30, y + 38], fill=accent)
-    _draw_tracked(draw, (x + 15, y + 6), label, f, ink, 4)
-    return y + 38
+    elif style == "outline":
+        draw.rounded_rectangle([x, y, x + int(text_w) + 34, y + 40], radius=20,
+                               outline=accent, width=3)
+        _draw_tracked(draw, (x + 17, y + 8), label, f, accent, 3)
+    elif style == "underline":
+        _draw_tracked(draw, (x, y + 6), label, f, accent, 3)
+        draw.rectangle([x, y + 34, x + int(text_w), y + 38], fill=accent)
+    else:  # plain
+        _draw_tracked(draw, (x, y + 6), label, f, accent, 3)
+    return y + 40
+
+
+def _motif(img: Image.Image, accent) -> None:
+    """Draw the design's signature decorative element so each brand has its own
+    recognizable shape language (not just a recolored template)."""
+    motif = _design().get("motif", "none")
+    if motif == "none":
+        return
+    layer = Image.new("RGBA", (_LW, _LH), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    soft = (*accent, 30)
+    if motif == "blob":
+        d.ellipse([_LW - 360, -160, _LW + 160, 360], fill=soft)
+        d.ellipse([-160, _LH - 300, 240, _LH + 200], fill=(*accent, 22))
+    elif motif == "arc":
+        d.ellipse([_LW // 2 - 620, -940, _LW // 2 + 620, 120], outline=(*accent, 70), width=14)
+    elif motif == "stripe":
+        for i in range(-1, 3):
+            off = i * 66
+            d.polygon([(_LW - 250 + off, 0), (_LW - 130 + off, 0),
+                       (_LW - 380 + off, _LH), (_LW - 500 + off, _LH)],
+                      fill=(*accent, 26))
+    elif motif == "corner":
+        d.rectangle([_LW - 150, 60, _LW - 60, 74], fill=(*accent, 120))
+        d.rectangle([_LW - 76, 60, _LW - 60, 190], fill=(*accent, 120))
+        d.rectangle([60, _LH - 190, 74, _LH - 60], fill=(*accent, 120))
+        d.rectangle([60, _LH - 76, 190, _LH - 60], fill=(*accent, 120))
+    img.alpha_composite(layer)
 
 
 def _footer_navy(img, draw, margin, light=False):
@@ -770,6 +901,7 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
     """Clean LIGHT card with numbered accent badges -- strong contrast to the
     dark photo/typographic cards."""
     img = Image.new("RGB", (_LW, _LH), PAPER).convert("RGBA")
+    _motif(img, accent)
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 0, _LW, 8], fill=accent)
     margin = 90
@@ -872,12 +1004,34 @@ def _footer_bar(img, draw, margin, bar_h=76):
               _domain(), font=fd, fill=(150, 166, 182))
 
 
+def _rule(draw, cx_or_x, y, accent, centered=False):
+    """Draw the design's accent rule (bar / long / dot / none)."""
+    style = _design().get("rule", "bar")
+    if style == "none":
+        return
+    if style == "dot":
+        r = 7
+        gap = 26
+        total = gap * 2
+        x0 = (cx_or_x - total // 2) if centered else cx_or_x
+        for i in range(3):
+            cx = x0 + i * gap
+            draw.ellipse([cx - r, y - r, cx + r, y + r], fill=accent)
+        return
+    w = 160 if style == "long" else 92
+    x0 = (cx_or_x - w // 2) if centered else cx_or_x
+    draw.rectangle([x0, y - 4, x0 + w, y + 4], fill=accent)
+
+
 def render_light_statement(post_text, out_path, kicker, headline, accent, seed=None):
-    """Light paper background, big dark headline -- a bright counterpart to the
-    navy 'statement'."""
+    """Light card, big headline in the account's own type + layout identity."""
+    d = _design()
+    centered = d["align"] == "center"
     img = Image.new("RGB", (_LW, _LH), PAPER).convert("RGBA")
+    _motif(img, accent)
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, 9, _LH], fill=accent)
+    if not centered:
+        draw.rectangle([0, 0, 9, _LH], fill=accent)
     margin = 90
     headline = _head_text(headline)
     hi_size = 92 if _style() == "bright" else 108
@@ -894,15 +1048,25 @@ def render_light_statement(post_text, out_path, kicker, headline, accent, seed=N
     kicker_h, rule_h, sup_lh = 56, 46, 40
     block_h = kicker_h + len(hl) * head_lh + rule_h + len(support) * sup_lh
     y = _center_start(block_h, top=130, bottom=175)
-    _kicker_tab(draw, margin, y, kicker, accent)
+    cx = _LW // 2
+
+    if centered:
+        kw = _kicker_width(draw, kicker)
+        _kicker_tab(draw, cx - kw // 2, y, kicker, accent)
+    else:
+        _kicker_tab(draw, margin, y, kicker, accent)
     y += kicker_h
     for ln in hl:
-        draw.text((margin, y), ln, font=fh, fill=INK)
+        lw = draw.textlength(ln, font=fh)
+        x = (cx - lw / 2) if centered else margin
+        draw.text((x, y), ln, font=fh, fill=INK)
         y += head_lh
-    draw.rectangle([margin, y + 12, margin + 92, y + 20], fill=accent)
+    _rule(draw, cx if centered else margin, y + 16, accent, centered=centered)
     y += rule_h
     for ln in support:
-        draw.text((margin, y), ln, font=fs, fill=(84, 98, 112))
+        lw = draw.textlength(ln, font=fs)
+        x = (cx - lw / 2) if centered else margin
+        draw.text((x, y), ln, font=fs, fill=(84, 98, 112))
         y += sup_lh
     _footer_bar(img, draw, margin)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

@@ -36,6 +36,7 @@ from flask import (
 import cards
 import content
 import generate as gen
+import imagecard
 import onboard
 import publish as pub
 import store
@@ -357,6 +358,9 @@ def _render(page, title):
         account=tenants.account(cur_slug),
         current_style=tenants.style(cur_slug),
         logo_v=logo_v,
+        design_labels=imagecard.DESIGN_LABELS,
+        current_design=imagecard.current_design_id(),
+        design_choice=tenants.account(cur_slug).get("design", "auto"),
     )
 
 
@@ -718,6 +722,11 @@ def account_save():
     acct["accent"] = (request.form.get("accent") or acct.get("accent", "#2ecc71")).strip()
     acct["accent2"] = (request.form.get("accent2") or acct.get("accent2", "#2b6cc4")).strip()
     acct["style"] = "bright" if request.form.get("style") == "bright" else "dark"
+    design = (request.form.get("design") or "auto").strip()
+    if design == "auto" or design not in imagecard.DESIGN_LABELS:
+        acct.pop("design", None)      # revert to automatic per-account assignment
+    else:
+        acct["design"] = design
     # Only overwrite creds when a new value is supplied (blank = keep existing).
     pid = (request.form.get("fb_page_id") or "").strip()
     tok = (request.form.get("fb_token") or "").strip()
@@ -1286,6 +1295,11 @@ TEMPLATE = r"""
             <label class="radiobox {{ 'on' if current_style=='bright' }}"><input type="radio" name="style" value="bright" {{ 'checked' if current_style=='bright' }}> Bright &amp; clean <span class="hint2">home/consumer services</span></label>
             <label class="radiobox {{ 'on' if current_style=='dark' }}"><input type="radio" name="style" value="dark" {{ 'checked' if current_style=='dark' }}> Dark &amp; premium <span class="hint2">tech/security brands</span></label>
           </div>
+          <label style="margin-top:12px;">Design system <span class="hint2" style="font-weight:400;">each client gets a unique one automatically</span></label>
+          <select name="design">
+            <option value="auto" {{ 'selected' if design_choice=='auto' }}>Auto (currently: {{ design_labels.get(current_design, current_design) }})</option>
+            {% for did, label in design_labels.items() %}<option value="{{ did }}" {{ 'selected' if design_choice==did }}>{{ label }}</option>{% endfor %}
+          </select>
           <button class="btn primary" type="submit" style="margin-top:14px;">Save changes</button>
         </form>
       </div>
