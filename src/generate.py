@@ -240,7 +240,8 @@ def _build_custom_prompt(
         "not give you.",
         f"FORMAT for this post (follow it): {fmt['instruction']}",
         f"LENGTH for this post: {length['instruction']}",
-        f"The clickable link {content.brand()["website"]} and hashtags go in the caption.",
+        f"The clickable link {content.brand().get('website', '')} and hashtags "
+        "go in the caption.",
         "",
         "Return ONLY the JSON object described in your instructions.",
     ]
