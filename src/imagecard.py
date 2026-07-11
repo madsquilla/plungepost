@@ -384,26 +384,70 @@ def _logo_is_opaque() -> bool:
         return False
 
 
+def _image_luma(im: Image.Image) -> float:
+    """Average luminance (0-255) of an image's visible (opaque) pixels."""
+    small = im.convert("RGBA").resize((28, 28))
+    px = small.load()
+    tot, n = 0.0, 0
+    for j in range(28):
+        for i in range(28):
+            r, g, b, a = px[i, j]
+            if a > 40:
+                tot += 0.299 * r + 0.587 * g + 0.114 * b
+                n += 1
+    return (tot / n) if n else 128.0
+
+
+def _has_logo_file() -> bool:
+    return tenants.logo_full().exists()
+
+
 def _place_logo_footer(base: Image.Image, x: int, y: int, height: int,
                        on_dark: bool = True) -> int:
-    """Place the logo in a footer. If the logo has its own opaque background it
-    is set on a clean rounded white chip so it reads as intentional rather than
-    a stray dark box; transparent logos are placed directly."""
+    """Place the brand logo so it ALWAYS reads on its background.
+
+    - No logo file -> draw the account name (wordmark) in a color that contrasts
+      the background (light on dark, dark on light).
+    - Real logo -> if it has a baked background or low contrast with the footer,
+      set it on a contrasting rounded chip (white on dark, navy on light);
+      otherwise place it directly.
+    """
+    if not _has_logo_file():
+        return _draw_wordmark_footer(base, x, y, height, on_dark)
+
     logo = _logo_image()
     scale = height / logo.height
     logo = logo.resize((max(1, int(logo.width * scale)), height))
-    if _logo_is_opaque():
-        pad = max(8, height // 5)
+    opaque = logo.split()[3].getextrema()[0] > 210
+    bg_l = 26 if on_dark else 242
+    contrast = abs(_image_luma(logo) - bg_l)
+    if opaque or contrast < 85:
+        pad = max(12, height // 4)
         chip_w, chip_h = logo.width + pad * 2, logo.height + pad * 2
+        chip_fill = (255, 255, 255, 255) if on_dark else (13, 24, 36, 255)
         chip = Image.new("RGBA", (chip_w, chip_h), (0, 0, 0, 0))
         ImageDraw.Draw(chip).rounded_rectangle(
-            [0, 0, chip_w - 1, chip_h - 1], radius=max(10, height // 4),
-            fill=(255, 255, 255, 255))
+            [0, 0, chip_w - 1, chip_h - 1], radius=max(12, height // 3),
+            fill=chip_fill)
         chip.alpha_composite(logo, (pad, pad))
         base.alpha_composite(chip, (x, y - pad))
         return chip_w
     base.alpha_composite(logo, (x, y))
     return logo.width
+
+
+def _draw_wordmark_footer(base: Image.Image, x: int, y: int, height: int,
+                          on_dark: bool) -> int:
+    """Draw the account name as a wordmark in a contrasting brand color."""
+    draw = ImageDraw.Draw(base)
+    name = ((tenants.account().get("name") or "").strip()) or "Brand"
+    accent = tenants.accent_colors()[0]
+    color = _lighten(accent, 0.55) if on_dark else tuple(int(c * 0.62) for c in accent)
+    file, weight = _design()["head"]
+    font = _face(file, int(height * 0.92), weight)
+    bbox = draw.textbbox((0, 0), name, font=font)
+    draw.text((x, y - bbox[1]), name, font=font, fill=color)
+    return int(draw.textlength(name, font=font))
 
 
 # ---------------------------------------------------------------------------
@@ -843,11 +887,11 @@ def _motif(img: Image.Image, accent) -> None:
 
 
 def _footer_navy(img, draw, margin, light=False):
-    fy = _LH - 84
-    _place_logo_footer(img, margin, fy, 50, on_dark=True)
-    fd = _font("Rajdhani-SemiBold.ttf", 24)
+    fy = _LH - 92
+    _place_logo_footer(img, margin, fy, 60, on_dark=True)
+    fd = _font("NunitoSans.ttf", 24)
     dw = draw.textlength(_domain(), font=fd)
-    draw.text((_LW - margin - dw, fy + 12), _domain(), font=fd, fill=(226, 234, 244))
+    draw.text((_LW - margin - dw, fy + 18), _domain(), font=fd, fill=(226, 234, 244))
 
 
 def render_statement(post_text, out_path, kicker, headline, accent, seed=None):
@@ -944,7 +988,7 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
     kicker_h, head_lh = 54, 60
     items_h = sum(max(60, len(ls) * 37 + 16) for ls in item_lines)
     block_h = kicker_h + len(hl) * head_lh + 28 + items_h
-    bar_h = 80
+    bar_h = 88
     y = max(60, (_LH - bar_h - block_h) // 2)
     _kicker_tab(draw, margin, y, kicker, accent)
     y += kicker_h
@@ -963,11 +1007,11 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
             ty += 37
         y = max(y + 60, ty + 16)
     draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
-    _place_logo_footer(img, margin, _LH - bar_h + (bar_h - 44) // 2, 44)
-    fd = _font("Rajdhani-SemiBold.ttf", 24)
+    _place_logo_footer(img, margin, _LH - bar_h + (bar_h - 54) // 2, 54, on_dark=True)
+    fd = _font("NunitoSans.ttf", 24)
     dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 24) // 2), _domain(),
-              font=fd, fill=(150, 166, 182))
+              font=fd, fill=(180, 194, 208))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(out_path, "PNG")
     return "checklist"
@@ -1022,14 +1066,14 @@ def render_editorial(post_text, out_path, kicker, headline, accent, photo_path, 
     return "editorial"
 
 
-def _footer_bar(img, draw, margin, bar_h=76):
+def _footer_bar(img, draw, margin, bar_h=88):
     """Navy footer strip (used by light / color templates so the logo reads)."""
     draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
-    _place_logo_footer(img, margin, _LH - bar_h + (bar_h - 42) // 2, 42)
-    fd = _font("Rajdhani-SemiBold.ttf", 23)
+    _place_logo_footer(img, margin, _LH - bar_h + (bar_h - 54) // 2, 54, on_dark=True)
+    fd = _font("NunitoSans.ttf", 23)
     dw = draw.textlength(_domain(), font=fd)
-    draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 22) // 2),
-              _domain(), font=fd, fill=(150, 166, 182))
+    draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 23) // 2),
+              _domain(), font=fd, fill=(180, 194, 208))
 
 
 def _rule(draw, cx_or_x, y, accent, centered=False):
@@ -1194,7 +1238,7 @@ def render_two_block(post_text, out_path, kicker, headline, accent, seed=None):
     for ln in t2_lines:
         draw.text((margin, by), ln, font=ft, fill=WHITE)
         by += line_h
-    _place_logo_footer(img, margin, _LH - 74, 44)
+    _place_logo_footer(img, margin, _LH - 84, 54, on_dark=True)
     fd = _font("Rajdhani-SemiBold.ttf", 23)
     dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - margin - dw, _LH - 56), _domain(), font=fd, fill=(150, 166, 182))
@@ -1500,7 +1544,7 @@ def _lay_side_band(post_text, out, kicker, headline, accent, photo_path=None, se
     _draw_tracked(draw, (56, 120), (kicker or "").upper(), kf, (255, 255, 255), 3)
     # Brand mark on the band: real logo if present, else the name in white.
     if tenants.logo_full().exists():
-        _place_logo_footer(img, 56, _LH - 150, 46, on_dark=True)
+        _place_logo_footer(img, 56, _LH - 168, 62, on_dark=True)
         dd = _font("NunitoSans.ttf", 22)
         draw.text((56, _LH - 88), _domain(), font=dd, fill=(235, 242, 248))
     else:
@@ -1569,7 +1613,7 @@ def _lay_frame(post_text, out, kicker, headline, accent, photo_path=None, seed=N
         draw.text((x, y), ln, font=fs, fill=(84, 98, 112))
         y += 36
     lf_y = _LH - m - 58
-    _place_logo_footer(img, inm, lf_y, 40, on_dark=False)
+    _place_logo_footer(img, inm, lf_y, 54, on_dark=False)
     fd = _font("NunitoSans.ttf", 22)
     dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - inm - dw, lf_y + 8), _domain(), font=fd, fill=(140, 152, 166))
@@ -1580,12 +1624,15 @@ def _lay_frame(post_text, out, kicker, headline, accent, photo_path=None, seed=N
 
 # Each bright design owns a distinct set of layouts (primary first). Photo and
 # list layouts are shared but only used when the post has a photo / a list.
+# Each design keeps a recognizable identity (its own font/color/motif) but draws
+# from several layouts so a single brand's feed stays varied. Pools differ per
+# design so two brands are still composed differently.
 _DESIGN_LAYOUTS = {
-    "soft-rounded": ["top-bar", "editorial", "checklist"],
-    "friendly-round": ["center-hero", "frame", "checklist"],
-    "elegant-serif": ["frame", "editorial"],
-    "bold-impact": ["side-band", "corner", "bold-color"],
-    "modern-grotesk": ["corner", "side-band", "editorial"],
+    "soft-rounded": ["top-bar", "center-hero", "corner", "editorial", "checklist"],
+    "friendly-round": ["center-hero", "frame", "top-bar", "editorial", "checklist"],
+    "elegant-serif": ["frame", "center-hero", "corner", "editorial", "side-band"],
+    "bold-impact": ["side-band", "corner", "bold-color", "top-bar", "editorial"],
+    "modern-grotesk": ["corner", "side-band", "top-bar", "center-hero", "editorial"],
 }
 
 
