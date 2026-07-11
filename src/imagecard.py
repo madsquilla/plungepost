@@ -18,7 +18,7 @@ import random
 import re
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 import tenants
 
@@ -235,6 +235,38 @@ def _place_logo_full(base: Image.Image, x: int, y: int, height: int) -> int:
     logo = Image.open(_logo_full_path()).convert("RGBA")
     scale = height / logo.height
     logo = logo.resize((int(logo.width * scale), height))
+    base.alpha_composite(logo, (x, y))
+    return logo.width
+
+
+def _logo_is_opaque() -> bool:
+    """True if the account logo has a baked-in (non-transparent) background, so
+    it would render as an ugly rectangle on a photo/dark footer."""
+    try:
+        a = Image.open(_logo_full_path()).convert("RGBA").split()[3]
+        return a.getextrema()[0] > 210      # min alpha high -> no transparency
+    except Exception:
+        return False
+
+
+def _place_logo_footer(base: Image.Image, x: int, y: int, height: int,
+                       on_dark: bool = True) -> int:
+    """Place the logo in a footer. If the logo has its own opaque background it
+    is set on a clean rounded white chip so it reads as intentional rather than
+    a stray dark box; transparent logos are placed directly."""
+    logo = Image.open(_logo_full_path()).convert("RGBA")
+    scale = height / logo.height
+    logo = logo.resize((max(1, int(logo.width * scale)), height))
+    if _logo_is_opaque():
+        pad = max(8, height // 5)
+        chip_w, chip_h = logo.width + pad * 2, logo.height + pad * 2
+        chip = Image.new("RGBA", (chip_w, chip_h), (0, 0, 0, 0))
+        ImageDraw.Draw(chip).rounded_rectangle(
+            [0, 0, chip_w - 1, chip_h - 1], radius=max(10, height // 4),
+            fill=(255, 255, 255, 255))
+        chip.alpha_composite(logo, (pad, pad))
+        base.alpha_composite(chip, (x, y - pad))
+        return chip_w
     base.alpha_composite(logo, (x, y))
     return logo.width
 
@@ -491,15 +523,19 @@ def _brand_tone(img: Image.Image, accent) -> Image.Image:
     """Grade a photo toward the brand palette so stock shots look art-directed
     and cohesive rather than like a random stock image. 'bright' accounts get a
     clean, airy, natural grade; 'dark' accounts get the navy-premium grade."""
-    g = ImageOps.autocontrast(ImageOps.grayscale(img), cutoff=1)
     if _style() == "bright":
-        # Keep the photo looking real, light and fresh: only a gentle brand wash.
-        shadow = (44, 58, 74)
-        high = (255, 255, 255)
-        base_mid = (182, 200, 216)
-        mid = tuple(int(accent[i] * 0.26 + base_mid[i] * 0.74) for i in range(3))
-        duo = ImageOps.colorize(g, black=shadow, white=high, mid=mid).convert("RGB")
-        return Image.blend(img.convert("RGB"), duo, 0.34)
+        # Keep the photo vivid, bright and real: punch up color/brightness and
+        # apply only a whisper of brand wash for cohesion (no muddy grey).
+        base = img.convert("RGB")
+        base = ImageEnhance.Color(base).enhance(1.22)
+        base = ImageEnhance.Brightness(base).enhance(1.06)
+        base = ImageEnhance.Contrast(base).enhance(1.05)
+        g = ImageOps.autocontrast(ImageOps.grayscale(img), cutoff=1)
+        mid = tuple(int(accent[i] * 0.5 + 150 * 0.5) for i in range(3))
+        duo = ImageOps.colorize(g, black=(28, 38, 52), white=(255, 255, 255),
+                                mid=mid).convert("RGB")
+        return Image.blend(base, duo, 0.10)
+    g = ImageOps.autocontrast(ImageOps.grayscale(img), cutoff=1)
     shadow = (7, 14, 26)
     high = (226, 234, 245)
     base_mid = (40, 64, 92)
@@ -616,10 +652,10 @@ def _kicker_tab(draw, x, y, label, accent, ink=(255, 255, 255)) -> int:
 
 def _footer_navy(img, draw, margin, light=False):
     fy = _LH - 84
-    _place_logo_full(img, margin, fy, 50)
+    _place_logo_footer(img, margin, fy, 50, on_dark=True)
     fd = _font("Rajdhani-SemiBold.ttf", 24)
     dw = draw.textlength(_domain(), font=fd)
-    draw.text((_LW - margin - dw, fy + 12), _domain(), font=fd, fill=DOMAIN_DIM)
+    draw.text((_LW - margin - dw, fy + 12), _domain(), font=fd, fill=(226, 234, 244))
 
 
 def render_statement(post_text, out_path, kicker, headline, accent, seed=None):
@@ -734,7 +770,7 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
             ty += 37
         y = max(y + 60, ty + 16)
     draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
-    _place_logo_full(img, margin, _LH - bar_h + (bar_h - 44) // 2, 44)
+    _place_logo_footer(img, margin, _LH - bar_h + (bar_h - 44) // 2, 44)
     fd = _font("Rajdhani-SemiBold.ttf", 24)
     dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 24) // 2), _domain(),
@@ -744,18 +780,35 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
     return "checklist"
 
 
+def _draw_headline_white(img, x, y, lines, font, lh):
+    """Crisp pure-white headline with a soft drop shadow for photo legibility."""
+    for ln in lines:
+        sh = Image.new("RGBA", (int(img.width), lh + 40), (0, 0, 0, 0))
+        ImageDraw.Draw(sh).text((3, 5), ln, font=font, fill=(0, 0, 0, 170))
+        sh = sh.filter(ImageFilter.GaussianBlur(6))
+        img.alpha_composite(sh, (x, y))
+        ImageDraw.Draw(img).text((x, y), ln, font=font, fill=(255, 255, 255))
+        y += lh
+    return y
+
+
 def render_editorial(post_text, out_path, kicker, headline, accent, photo_path, seed=None):
     """Photo-forward: brand-toned full photo, big headline over a bottom scrim."""
+    bright = _style() == "bright"
     img = _brand_tone(ImageOps.fit(Image.open(photo_path).convert("RGB"),
                                    (_LW, _LH), method=Image.LANCZOS), accent).convert("RGBA")
     band = Image.new("RGBA", (_LW, _LH), (0, 0, 0, 0))
     bd = ImageDraw.Draw(band)
+    # A slightly deeper, taller scrim so a white headline always reads on a
+    # bright photo.
+    reach, peak = (430, 250) if bright else (360, 244)
     for y in range(_LH):
-        t = max(0.0, (y - (_LH - 360)) / 360)
-        bd.line([(0, y), (_LW, y)], fill=(*NAVY_DEEP, int(244 * (t ** 1.2))))
+        t = max(0.0, (y - (_LH - reach)) / reach)
+        bd.line([(0, y), (_LW, y)], fill=(*NAVY_DEEP, int(peak * (t ** 1.15))))
     img.alpha_composite(band)
-    img.alpha_composite(_radial_glow(560, 560, accent, 0.22), (-180, _LH - 430))
-    _grain(img, 7)
+    if not bright:
+        img.alpha_composite(_radial_glow(560, 560, accent, 0.22), (-180, _LH - 430))
+        _grain(img, 7)
     draw = ImageDraw.Draw(img)
     margin = 80
     fh = _font("Rajdhani-Bold.ttf", 66)
@@ -763,7 +816,10 @@ def render_editorial(post_text, out_path, kicker, headline, accent, photo_path, 
     fy = _LH - 84
     y = fy - 24 - len(hl) * 66
     _kicker_tab(draw, margin, y - 56, kicker, accent)
-    _draw_headline_grad(img, margin, y, hl, fh, 66, accent)
+    if bright:
+        _draw_headline_white(img, margin, y, hl, fh, 66)
+    else:
+        _draw_headline_grad(img, margin, y, hl, fh, 66, accent)
     draw = ImageDraw.Draw(img)
     _footer_navy(img, draw, margin)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -774,7 +830,7 @@ def render_editorial(post_text, out_path, kicker, headline, accent, photo_path, 
 def _footer_bar(img, draw, margin, bar_h=76):
     """Navy footer strip (used by light / color templates so the logo reads)."""
     draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
-    _place_logo_full(img, margin, _LH - bar_h + (bar_h - 42) // 2, 42)
+    _place_logo_footer(img, margin, _LH - bar_h + (bar_h - 42) // 2, 42)
     fd = _font("Rajdhani-SemiBold.ttf", 23)
     dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 22) // 2),
@@ -909,7 +965,7 @@ def render_two_block(post_text, out_path, kicker, headline, accent, seed=None):
     for ln in t2_lines:
         draw.text((margin, by), ln, font=ft, fill=WHITE)
         by += line_h
-    _place_logo_full(img, margin, _LH - 74, 44)
+    _place_logo_footer(img, margin, _LH - 74, 44)
     fd = _font("Rajdhani-SemiBold.ttf", 23)
     dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - margin - dw, _LH - 56), _domain(), font=fd, fill=(150, 166, 182))
