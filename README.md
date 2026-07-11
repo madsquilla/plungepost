@@ -225,7 +225,7 @@ docker build -t skysystems-poster:latest .
 Test the image with a dry-run (mount data/ so output persists):
 
 ```powershell
-docker run --rm --env-file .env -v ${PWD}\data:/app/data -v ${PWD}\logs:/app/logs `
+docker run --rm --env-file .env -v ${PWD}\data:/app/data -v ${PWD}\tenants:/app/tenants -v ${PWD}\logs:/app/logs `
   skysystems-poster:latest --mode stage --dry-run
 ```
 
@@ -275,17 +275,22 @@ Scripts `docker run` below), set these three variables in the template:
 | `META_PAGE_ID`           | Numeric ID of the SkySystems USA Page            |
 | `META_PAGE_ACCESS_TOKEN` | Long-lived **Page** access token                 |
 
-### d) Make `data/` persistent (so history/dedup survive)
+### d) Make `data/` and `tenants/` persistent (so accounts/history survive)
 
-Map a host path into the container so the queues and history are not lost when
-the container is recreated:
+Map host paths into the container so the queues, history, and every account's
+brand/tokens/cards are not lost when the container is recreated:
 
 | Container path | Host path (example)                              |
 | -------------- | ------------------------------------------------ |
 | `/app/data`    | `/mnt/user/appdata/skysystems-poster/data`       |
+| `/app/tenants` | `/mnt/user/appdata/skysystems-poster/tenants`    |
 | `/app/logs`    | `/mnt/user/appdata/skysystems-poster/logs`       |
 
-Without this mapping, `history.json` resets every run and dedup stops working.
+Without `/app/data`, `history.json` resets every run and dedup stops working.
+Without `/app/tenants`, **every account (including its Facebook Page token,
+brand, themes, logo, and cards) is wiped when the container is recreated** --
+the app would silently re-migrate only the original SkySystems setup on next
+start. `tenants/` is gitignored, so `update.sh` never touches it.
 
 ### e) Schedule it with the User Scripts plugin
 
@@ -300,6 +305,7 @@ docker run --rm \
   -e META_PAGE_ID="your-page-id" \
   -e META_PAGE_ACCESS_TOKEN="your-long-lived-page-token" \
   -v /mnt/user/appdata/skysystems-poster/data:/app/data \
+  -v /mnt/user/appdata/skysystems-poster/tenants:/app/tenants \
   -v /mnt/user/appdata/skysystems-poster/logs:/app/logs \
   skysystems-poster:latest --mode publish-approved
 ```

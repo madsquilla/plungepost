@@ -28,6 +28,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data
+      - ./tenants:/app/tenants
       - ./logs:/app/logs
 
   poster:
@@ -39,6 +40,7 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ./tenants:/app/tenants
       - ./logs:/app/logs
     # Default command if none is given on the CLI (override per run).
     command: ["--mode", "stage"]
