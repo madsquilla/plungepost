@@ -186,6 +186,17 @@ def fb_creds(slug: str | None = None) -> tuple[str, str]:
 
 # --- create / seed ---------------------------------------------------------
 
+def delete_tenant(slug: str) -> bool:
+    """Permanently remove an account (its brand, themes, logo, creds, queues,
+    and cards). Returns True if it existed and was removed."""
+    import shutil
+    d = TENANTS_DIR / slug
+    if d.exists() and d.is_dir():
+        shutil.rmtree(d, ignore_errors=True)
+        return True
+    return False
+
+
 def create_tenant(slug, name, website, brand_dict, themes_list, *,
                   fb_page_id="", fb_token="", accent=_DEFAULT_ACCENT,
                   accent2=_DEFAULT_ACCENT2, style="dark", logo_bytes=None,

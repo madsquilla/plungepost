@@ -485,3 +485,37 @@ def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str =
     logger.info("Onboarded new account '%s' (%s) with %d themes",
                 name, slug, len(themes))
     return slug
+
+
+def rebuild_content(slug: str, auto_colors: bool = True, progress=None) -> str:
+    """Re-scrape an existing account's website and regenerate its brand voice,
+    themes, logo, and (optionally) colors, WITHOUT touching its Facebook creds,
+    style, or post queues. Used by the account settings 'Rebuild' button."""
+    progress = progress or _noop
+    acct = tenants.account(slug)
+    name = acct.get("name", slug)
+    base = _normalize_url(acct.get("website", ""))
+    if not base:
+        raise RuntimeError("This account has no website to rebuild from.")
+
+    scrape = scrape_site(base, progress)
+    progress("Studying the brand and writing content themes...")
+    brand, themes = build_brand_and_themes(name, base, scrape)
+
+    progress("Fetching the logo...")
+    logo_bytes = _download_logo(scrape.get("logos", []), base)
+
+    accent = acct.get("accent", "#2ecc71")
+    accent2 = acct.get("accent2", "#2b6cc4")
+    if auto_colors:
+        accent, accent2 = detect_accents(scrape, logo_bytes, accent, accent2)
+
+    tenants.save_brand(brand, slug)
+    tenants.save_themes(themes, slug)
+    acct["accent"], acct["accent2"] = accent, accent2
+    tenants.save_account(acct, slug)
+    if logo_bytes:
+        (tenants.tenant_dir(slug) / "logo_full.png").write_bytes(logo_bytes)
+    logger.info("Rebuilt content for '%s' (%s): %d themes, colors %s/%s",
+                name, slug, len(themes), accent, accent2)
+    return slug

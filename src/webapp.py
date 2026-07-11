@@ -352,6 +352,8 @@ def _render(page, title):
         accounts=tenants.list_tenants(),
         current_slug=cur_slug,
         current_name=tenants.account(cur_slug).get("name", cur_slug),
+        account=tenants.account(cur_slug),
+        current_style=tenants.style(cur_slug),
     )
 
 
@@ -698,6 +700,113 @@ def onboard_status():
     return jsonify(data)
 
 
+# --- per-account settings --------------------------------------------------
+
+@app.route("/account")
+def account_settings():
+    return _render("account", "Account Settings")
+
+
+@app.route("/account/save", methods=["POST"])
+def account_save():
+    acct = tenants.account()
+    acct["name"] = (request.form.get("name") or acct.get("name", "")).strip()
+    acct["website"] = (request.form.get("website") or acct.get("website", "")).strip()
+    acct["accent"] = (request.form.get("accent") or acct.get("accent", "#2ecc71")).strip()
+    acct["accent2"] = (request.form.get("accent2") or acct.get("accent2", "#2b6cc4")).strip()
+    acct["style"] = "bright" if request.form.get("style") == "bright" else "dark"
+    # Only overwrite creds when a new value is supplied (blank = keep existing).
+    pid = (request.form.get("fb_page_id") or "").strip()
+    tok = (request.form.get("fb_token") or "").strip()
+    if pid:
+        acct["fb_page_id"] = pid
+    if tok:
+        acct["fb_token"] = tok
+    tenants.save_account(acct)
+    flash("Account settings saved.", "ok")
+    return redirect(url_for("account_settings"))
+
+
+@app.route("/account/verify", methods=["POST"])
+def account_verify():
+    """Confirm the saved token belongs to the saved Page, and show its name."""
+    page_id, token = tenants.fb_creds()
+    if not (page_id and token):
+        flash("No Page ID or token saved yet.", "err")
+        return redirect(url_for("account_settings"))
+    try:
+        import requests as _rq
+        r = _rq.get(f"https://graph.facebook.com/v21.0/{page_id}",
+                    params={"fields": "name", "access_token": token}, timeout=15)
+        data = r.json()
+        if r.status_code == 200 and data.get("name"):
+            flash(f"Connected to Facebook Page: \"{data['name']}\" (id {page_id}). "
+                  "This is the page posts will publish to.", "ok")
+        else:
+            err = (data.get("error") or {}).get("message", r.text[:160])
+            flash(f"Facebook rejected these credentials: {err}", "err")
+    except Exception as exc:  # noqa: BLE001
+        flash(f"Could not reach Facebook to verify: {exc}", "err")
+    return redirect(url_for("account_settings"))
+
+
+@app.route("/account/delete", methods=["POST"])
+def account_delete():
+    slug = tenants.current()
+    others = [t for t in tenants.list_tenants() if t["slug"] != slug]
+    if not others:
+        flash("You cannot delete the only account. Add another first.", "err")
+        return redirect(url_for("account_settings"))
+    confirm = (request.form.get("confirm_name") or "").strip()
+    name = tenants.account(slug).get("name", slug)
+    if confirm != name:
+        flash(f'To delete, type the account name exactly: "{name}".', "err")
+        return redirect(url_for("account_settings"))
+    tenants.delete_tenant(slug)
+    session["acct"] = others[0]["slug"]
+    flash(f'Deleted account "{name}".', "ok")
+    return redirect(url_for("overview"))
+
+
+def _run_rebuild(slug, auto_colors):
+    try:
+        with _LOCK:
+            _ONB.update(active=True, message="Reading the website...",
+                        error=False, slug="")
+        onboard.rebuild_content(slug, auto_colors=auto_colors,
+                                progress=lambda m: _ONB.update(message=m))
+        with _LOCK:
+            _ONB.update(message="Done", slug=slug)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Rebuild failed")
+        m = str(exc)
+        low = m.lower()
+        if "credit balance" in low:
+            m = "Anthropic API is out of credits. Add credits at console.anthropic.com."
+        elif "authentication" in low or "x-api-key" in low or "401" in low:
+            m = "Anthropic API key was rejected. Check ANTHROPIC_API_KEY in .env."
+        else:
+            m = "Rebuild failed: " + m[:160]
+        with _LOCK:
+            _ONB.update(error=True, message=m)
+    finally:
+        with _LOCK:
+            _ONB["active"] = False
+
+
+@app.route("/account/rebuild", methods=["POST"])
+def account_rebuild():
+    slug = tenants.current()
+    auto_colors = request.form.get("auto_colors") == "on"
+    with _LOCK:
+        if _ONB["active"]:
+            flash("Already building an account -- hang tight.", "err")
+            return redirect(url_for("account_settings"))
+        _ONB.update(active=True, message="Starting", error=False, slug="")
+    threading.Thread(target=_run_rebuild, args=(slug, auto_colors), daemon=True).start()
+    return redirect(url_for("account_settings"))
+
+
 TEMPLATE = r"""
 {% macro render_post(p, kind, meta_ready, now_local) %}
 <article class="post">
@@ -908,6 +1017,17 @@ TEMPLATE = r"""
   .acct-check{display:flex;align-items:center;gap:9px;color:#c3d0dd;font-size:13px;
     margin-bottom:10px;cursor:pointer;text-transform:none;letter-spacing:0;}
   .acct-check input{width:auto;margin:0;}
+  .radio-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;}
+  .radiobox{flex:1 1 200px;display:flex;align-items:center;gap:8px;background:var(--soft);
+    border:1px solid var(--bd2);border-radius:10px;padding:11px 14px;font-size:13.5px;
+    color:var(--text);text-transform:none;letter-spacing:0;margin:0;cursor:pointer;
+    font-weight:600;transition:.14s;}
+  .radiobox:hover{border-color:#b8c3cf;background:#fff;}
+  .radiobox.on{border-color:var(--green);background:#eafaf0;}
+  .radiobox input{width:auto;margin:0;}
+  .radiobox .hint2{font-weight:400;color:var(--mut);font-size:12px;}
+  .danger-panel{border-color:#f0cfd4;}
+  .danger-panel h3{color:#b23a4e;}
   .acct-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
   @media(max-width:1000px){
     .layout{grid-template-columns:1fr;}
@@ -943,7 +1063,7 @@ TEMPLATE = r"""
 <div id="genOverlay" class="gen-overlay">
   <div class="gen-card">
     <div class="gen-spin"></div>
-    <div class="gen-title">Creating your post</div>
+    <div class="gen-title" id="genTitle">Creating your post</div>
     <div id="genMsg" class="gen-msg">Starting</div>
     <div class="gen-track"><div id="genBar" class="gen-bar"></div></div>
     <button id="genClose" class="btn outline" style="display:none;margin-top:18px;" onclick="document.getElementById('genOverlay').style.display='none';">Dismiss</button>
@@ -994,6 +1114,7 @@ TEMPLATE = r"""
       <a href="{{ url_for('approved_page') }}" class="{{ 'active' if page=='approved' }}">Ready <span class="n">{{ ready|length }}</span></a>
       <a href="{{ url_for('scheduled_page') }}" class="{{ 'active' if page=='scheduled' }}">Scheduled <span class="n">{{ scheduled|length }}</span></a>
       <a href="{{ url_for('published') }}" class="{{ 'active' if page=='published' }}">Published <span class="n">{{ posted_total }}</span></a>
+      <a href="{{ url_for('account_settings') }}" class="{{ 'active' if page=='account' }}">Account Settings</a>
     </nav>
     <div class="side-foot">
       {% if meta_ready %}<span class="pill on"><span class="dot"></span>Connected</span>
@@ -1104,6 +1225,72 @@ TEMPLATE = r"""
       {% if not history %}<div class="empty">No posts published yet.</div>{% endif %}
       {% for p in history %}{{ render_post(p, "history", meta_ready, now_local) }}{% endfor %}
       {% endif %}
+
+      {% if page == 'account' %}
+      <div class="sec"><h2>{{ current_name }}</h2><span class="ln"></span></div>
+
+      <div class="panel">
+        <h3>Brand &amp; details</h3>
+        <form method="post" action="{{ url_for('account_save') }}">
+          <label>Business name</label>
+          <input name="name" value="{{ account.name or '' }}">
+          <label>Website</label>
+          <input name="website" value="{{ account.website or '' }}">
+          <div class="inline" style="margin-top:12px;">
+            <div>
+              <label>Primary color</label>
+              <input type="color" name="accent" value="{{ account.accent or '#2ecc71' }}" style="height:42px;padding:3px;">
+            </div>
+            <div>
+              <label>Secondary color</label>
+              <input type="color" name="accent2" value="{{ account.accent2 or '#2b6cc4' }}" style="height:42px;padding:3px;">
+            </div>
+          </div>
+          <label style="margin-top:12px;">Card look</label>
+          <div class="radio-row">
+            <label class="radiobox {{ 'on' if current_style=='bright' }}"><input type="radio" name="style" value="bright" {{ 'checked' if current_style=='bright' }}> Bright &amp; clean <span class="hint2">home/consumer services</span></label>
+            <label class="radiobox {{ 'on' if current_style=='dark' }}"><input type="radio" name="style" value="dark" {{ 'checked' if current_style=='dark' }}> Dark &amp; premium <span class="hint2">tech/security brands</span></label>
+          </div>
+          <button class="btn primary" type="submit" style="margin-top:14px;">Save changes</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h3>Facebook connection</h3>
+        <p class="hint">This account publishes only to this one Page. Leave a field blank to keep the current value. Use Verify to confirm which Page the saved token points to before publishing.</p>
+        {% if account.fb_page_id %}<p class="hint" style="color:var(--text);">Saved Page ID: <strong>{{ account.fb_page_id }}</strong>{% if account.fb_token %} &middot; token on file{% endif %}</p>{% else %}<div class="warn">No Facebook Page connected yet. Publishing is disabled for this account.</div>{% endif %}
+        <form method="post" action="{{ url_for('account_save') }}">
+          <label>Facebook Page ID</label>
+          <input name="fb_page_id" placeholder="{{ 'Currently set (hidden if left blank)' if account.fb_page_id else 'Numeric Page ID' }}">
+          <label>Facebook Page access token</label>
+          <input name="fb_token" placeholder="{{ 'Token on file (leave blank to keep)' if account.fb_token else 'Long-lived Page token' }}">
+          <input type="hidden" name="style" value="{{ current_style }}">
+          <button class="btn primary" type="submit" style="margin-top:12px;">Save connection</button>
+        </form>
+        <form method="post" action="{{ url_for('account_verify') }}" style="margin-top:10px;">
+          <button class="btn outline" type="submit" {{ 'disabled' if not account.fb_page_id }}>Verify connection</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h3>Rebuild content from website</h3>
+        <p class="hint">Re-read {{ account.website or 'the website' }} and regenerate the brand voice, content themes, logo, and colors. Your Facebook connection and existing posts are kept. Uses the Anthropic API.</p>
+        <form class="rebuildform" method="post" action="{{ url_for('account_rebuild') }}">
+          <label class="acct-check" style="color:var(--text);"><input type="checkbox" name="auto_colors" checked> Also re-detect brand colors from the site</label>
+          <button class="btn primary" type="submit" style="margin-top:8px;">Rebuild content</button>
+        </form>
+      </div>
+
+      <div class="panel danger-panel">
+        <h3>Delete this account</h3>
+        <p class="hint">Permanently removes {{ current_name }} and all its posts, cards, brand, and Facebook connection. This cannot be undone.</p>
+        <form method="post" action="{{ url_for('account_delete') }}" onsubmit="return confirm('Delete {{ current_name }} permanently? This cannot be undone.');">
+          <label>Type <strong>{{ current_name }}</strong> to confirm</label>
+          <input name="confirm_name" placeholder="{{ current_name }}" autocomplete="off">
+          <button class="btn danger" type="submit" style="margin-top:12px;">Delete account</button>
+        </form>
+      </div>
+      {% endif %}
     </div>
   </main>
 </div>
@@ -1161,6 +1348,30 @@ function pollOnboard(){
     else {setTimeout(pollOnboard,900);}
   }).catch(function(){setTimeout(pollOnboard,1500);});
 }
+// Rebuild content from the Account Settings page: reuse the progress overlay,
+// then reload the settings page when it finishes.
+function startRebuild(form){
+  var ov=document.getElementById('genOverlay'),bar=document.getElementById('genBar'),
+      msg=document.getElementById('genMsg'),title=document.getElementById('genTitle');
+  title.textContent='Rebuilding brand & content';
+  msg.textContent='Reading the website...'; bar.style.width='12%'; ov.style.display='flex';
+  fetch(form.action,{method:'POST',body:new FormData(form)}).then(function(){pollRebuild();});
+  return false;
+}
+function pollRebuild(){
+  var bar=document.getElementById('genBar'),msg=document.getElementById('genMsg');
+  fetch('/onboard-status').then(function(r){return r.json();}).then(function(s){
+    if(s.active){msg.textContent=s.message;bar.style.width='55%';setTimeout(pollRebuild,900);}
+    else if(s.error){msg.textContent=s.message;msg.style.color='#ff9aa8';
+      bar.style.background='#d6455f';bar.style.width='100%';
+      document.getElementById('genClose').style.display='inline-flex';}
+    else{msg.textContent='Done';bar.style.width='100%';
+      setTimeout(function(){window.location.href='{{ url_for("account_settings") }}';},500);}
+  }).catch(function(){setTimeout(pollRebuild,1500);});
+}
+document.querySelectorAll('form.rebuildform').forEach(function(f){
+  f.addEventListener('submit',function(e){e.preventDefault();startRebuild(f);});
+});
 </script>
 </body></html>
 """
