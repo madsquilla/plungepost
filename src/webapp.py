@@ -633,14 +633,14 @@ def switch_account(slug):
 _ONB = {"active": False, "message": "Idle", "error": False, "slug": ""}
 
 
-def _run_onboard(name, website, fb_page_id, fb_token, accent, accent2):
+def _run_onboard(name, website, fb_page_id, fb_token, accent, accent2, auto_colors):
     try:
         with _LOCK:
             _ONB.update(message="Reading the website...", error=False, slug="")
         slug = onboard.build_account(
             name=name, website=website,
             fb_page_id=fb_page_id, fb_token=fb_token,
-            accent=accent, accent2=accent2,
+            accent=accent, accent2=accent2, auto_colors=auto_colors,
             progress=lambda m: _ONB.update(message=m),
         )
         with _LOCK:
@@ -670,6 +670,8 @@ def account_new():
     fb_token = (request.form.get("fb_token") or "").strip()
     accent = (request.form.get("accent") or "#2ecc71").strip()
     accent2 = (request.form.get("accent2") or "#2b6cc4").strip()
+    # Auto-detect brand colors from the site unless the user unticked the box.
+    auto_colors = request.form.get("auto_colors") == "on"
     if not name or not website:
         flash("Business name and website are both required.", "err")
         return _back()
@@ -680,7 +682,7 @@ def account_new():
         _ONB.update(active=True, message="Starting", error=False, slug="")
     threading.Thread(
         target=_run_onboard,
-        args=(name, website, fb_page_id, fb_token, accent, accent2),
+        args=(name, website, fb_page_id, fb_token, accent, accent2, auto_colors),
         daemon=True,
     ).start()
     return _back()
@@ -903,6 +905,9 @@ TEMPLATE = r"""
   .acct-card input[type=color]{width:44px;height:34px;padding:2px;margin:0;cursor:pointer;}
   .acct-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
   .acct-row label{color:#9fb0c0;font-size:12.5px;margin:0;text-transform:none;letter-spacing:0;}
+  .acct-check{display:flex;align-items:center;gap:9px;color:#c3d0dd;font-size:13px;
+    margin-bottom:10px;cursor:pointer;text-transform:none;letter-spacing:0;}
+  .acct-check input{width:auto;margin:0;}
   .acct-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
   @media(max-width:1000px){
     .layout{grid-template-columns:1fr;}
@@ -947,11 +952,15 @@ TEMPLATE = r"""
 <div id="acctOverlay" class="gen-overlay">
   <div class="gen-card acct-card">
     <div class="gen-title" style="margin-bottom:4px;">Add an account</div>
-    <p class="acct-hint">Enter the business name and website. We read the site and auto-build the brand voice, services, content themes, and deep links. You can review everything after.</p>
+    <p class="acct-hint">Enter the business name and website. We read the site and auto-build the brand voice, services, content themes, deep links, logo, and brand colors. You can review everything after.</p>
     <form id="acctForm" method="post" action="{{ url_for('account_new') }}" onsubmit="return startOnboard();">
       <input name="name" placeholder="Business name (e.g. SparkleClean Co.)" required>
       <input name="website" placeholder="Website (e.g. https://sparkleclean.com)" required>
-      <div class="acct-row">
+      <label class="acct-check">
+        <input type="checkbox" name="auto_colors" id="autoColors" checked onchange="document.getElementById('colorRow').style.display=this.checked?'none':'flex';">
+        Detect brand colors from the website
+      </label>
+      <div class="acct-row" id="colorRow" style="display:none;">
         <label>Brand colors</label>
         <input type="color" name="accent" value="#2ecc71" title="Primary accent">
         <input type="color" name="accent2" value="#2b6cc4" title="Secondary accent">

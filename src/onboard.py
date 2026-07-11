@@ -57,6 +57,7 @@ class _TextExtractor(HTMLParser):
         self.chunks: list[str] = []
         self.links: list[tuple[str, str]] = []   # (href, anchor text)
         self.logos: list[str] = []
+        self.theme_colors: list[str] = []        # explicit brand color signals
         self._cur_href: str | None = None
         self._cur_anchor: list[str] = []
 
@@ -72,8 +73,14 @@ class _TextExtractor(HTMLParser):
             hint = (a.get("alt", "") + " " + src + " " + a.get("class", "")).lower()
             if "logo" in hint and src:
                 self.logos.append(src)
-        if tag == "meta" and a.get("property") == "og:image" and a.get("content"):
-            self.logos.append(a["content"])
+        if tag == "meta":
+            name = (a.get("name") or "").lower()
+            if a.get("property") == "og:image" and a.get("content"):
+                self.logos.append(a["content"])
+            # <meta name="theme-color"> / msapplication-TileColor are the site's
+            # declared brand color -- the strongest single signal.
+            if name in ("theme-color", "msapplication-tilecolor") and a.get("content"):
+                self.theme_colors.append(a["content"])
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "noscript", "svg") and self._skip:
@@ -119,6 +126,10 @@ def scrape_site(website: str, progress=_noop) -> dict:
     ex.feed(home_html)
     pages = [{"url": base, "text": " ".join(ex.chunks)}]
     logos = list(ex.logos)
+    theme_colors = list(ex.theme_colors)
+    # Also scan the raw homepage CSS/markup for the most-used saturated hex
+    # colors -- a good secondary brand-color signal when there is no meta tag.
+    theme_colors += _hex_colors_in(home_html)
 
     # Rank internal links by how well the URL/anchor matches a key-page keyword.
     seen = {base}
@@ -145,7 +156,119 @@ def scrape_site(website: str, progress=_noop) -> dict:
         pages.append({"url": url, "text": " ".join(ex2.chunks)})
         logos.extend(ex2.logos)
 
-    return {"base": base, "pages": pages, "logos": logos}
+    return {"base": base, "pages": pages, "logos": logos,
+            "theme_colors": theme_colors}
+
+
+# ---------------------------------------------------------------------------
+# Brand-color detection (site theme-color, CSS, and the logo image)
+# ---------------------------------------------------------------------------
+_HEX_RE = re.compile(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
+
+
+def _to_rgb(h: str):
+    h = (h or "").lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        return None
+    try:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    except ValueError:
+        return None
+
+
+def _rgb_to_hex(rgb) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def _saturation_value(rgb):
+    import colorsys
+    h, s, v = colorsys.rgb_to_hsv(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
+    return h, s, v
+
+
+def _is_brandable(rgb) -> bool:
+    """Skip near-white, near-black, and greys -- not usable as an accent."""
+    _, s, v = _saturation_value(rgb)
+    return s >= 0.28 and 0.18 <= v <= 0.95
+
+
+def _hex_colors_in(html: str) -> list[str]:
+    """Most-frequent brandable hex colors in a page's raw HTML/CSS, by count."""
+    counts: dict[tuple, int] = {}
+    for m in _HEX_RE.finditer(html or ""):
+        rgb = _to_rgb(m.group(0))
+        if rgb and _is_brandable(rgb):
+            counts[rgb] = counts.get(rgb, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    return [_rgb_to_hex(rgb) for rgb, _ in ordered[:8]]
+
+
+def _dominant_logo_colors(logo_bytes: bytes) -> list[str]:
+    """The dominant brandable colors in the logo image, most-common first."""
+    from io import BytesIO
+
+    from PIL import Image
+    try:
+        img = Image.open(BytesIO(logo_bytes)).convert("RGBA")
+    except Exception:
+        return []
+    # Composite over mid-grey so transparent PNGs don't bias toward white/black.
+    bg = Image.new("RGBA", img.size, (128, 128, 128, 255))
+    img = Image.alpha_composite(bg, img).convert("RGB").resize((96, 96))
+    q = img.quantize(colors=16, method=Image.Quantize.FASTOCTREE).convert("RGB")
+    counts: dict[tuple, int] = {}
+    for px in q.getdata():
+        counts[px] = counts.get(px, 0) + 1
+    scored = []
+    for rgb, n in counts.items():
+        if not _is_brandable(rgb):
+            continue
+        _, s, _v = _saturation_value(rgb)
+        scored.append((s * (n ** 0.5), rgb))     # weight vividness x frequency
+    scored.sort(reverse=True)
+    return [_rgb_to_hex(rgb) for _, rgb in scored[:6]]
+
+
+def _hue_far(a: str, b: str, min_deg: float = 25.0) -> bool:
+    """True if two hex colors differ enough in hue to read as two accents."""
+    ra, rb = _to_rgb(a), _to_rgb(b)
+    if not ra or not rb:
+        return True
+    ha = _saturation_value(ra)[0] * 360
+    hb = _saturation_value(rb)[0] * 360
+    diff = abs(ha - hb) % 360
+    return min(diff, 360 - diff) >= min_deg
+
+
+def detect_accents(scrape: dict, logo_bytes: bytes | None,
+                   fallback1: str, fallback2: str) -> tuple[str, str]:
+    """Pick two brand accents from the site's declared colors + logo, in order
+    of trust: <meta theme-color>, dominant logo colors, then frequent CSS hues.
+    Falls back to the provided defaults if the site yields nothing usable."""
+    candidates: list[str] = []
+    for c in scrape.get("theme_colors", []):
+        rgb = _to_rgb(c if c.startswith("#") else "#" + c)
+        if rgb and _is_brandable(rgb):
+            candidates.append(_rgb_to_hex(rgb))
+    if logo_bytes:
+        candidates += _dominant_logo_colors(logo_bytes)
+    # De-dupe, preserving order.
+    seen, ordered = set(), []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            ordered.append(c)
+    if not ordered:
+        return fallback1, fallback2
+    accent1 = ordered[0]
+    accent2 = next((c for c in ordered[1:] if _hue_far(c, accent1)), None)
+    if accent2 is None:
+        # Only one distinct hue found: derive a darker companion for accent2.
+        r, g, b = _to_rgb(accent1)
+        accent2 = _rgb_to_hex((int(r * 0.6), int(g * 0.6), int(b * 0.6)))
+    return accent1, accent2
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +444,7 @@ def _render_wordmark(name: str, accent: str) -> bytes:
 # ---------------------------------------------------------------------------
 def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str = "",
                   accent: str = "#2ecc71", accent2: str = "#2b6cc4",
-                  progress=None) -> str:
+                  auto_colors: bool = True, progress=None) -> str:
     progress = progress or _noop
     base = _normalize_url(website)
     scrape = scrape_site(base, progress)
@@ -331,6 +454,13 @@ def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str =
 
     progress("Fetching the logo...")
     logo_bytes = _download_logo(scrape.get("logos", []), base)
+
+    # Derive the brand colors from the site + logo unless the user chose to
+    # set them by hand. The passed accents are the fallback either way.
+    if auto_colors:
+        accent, accent2 = detect_accents(scrape, logo_bytes, accent, accent2)
+        logger.info("Detected brand colors for '%s': %s / %s", name, accent, accent2)
+
     if not logo_bytes:
         logo_bytes = _render_wordmark(name, accent)
 
