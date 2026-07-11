@@ -1417,6 +1417,214 @@ _DEFAULT_PHOTO = ["editorial", "split", "overlay", "band", "quote"]
 _DEFAULT_TEXT = ["statement", "light-statement", "bold-color", "quote"]
 
 
+# ---------------------------------------------------------------------------
+# Distinct per-design LAYOUTS (composition, not just type/color). Each bright
+# design system owns a different set so no two brands are laid out the same way.
+# ---------------------------------------------------------------------------
+def _fit_head(draw, text, max_w, max_size, min_size, max_lines):
+    """Auto-size the design headline font to fit within max_lines lines."""
+    text = _head_text(text)
+    fh, lines, lh = _head_font(max_size), [text], int(max_size * 1.12)
+    for hs in range(max_size, min_size - 1, -5):
+        fh = _head_font(hs)
+        lines = _wrap(draw, text, fh, max_w)
+        lh = int(hs * 1.12)
+        if len(lines) <= max_lines:
+            break
+    return fh, lines[:max_lines], lh
+
+
+def _body_lines(draw, post_text, font, max_w, n):
+    return _wrap(draw, _lead_sentence(post_text), font, max_w)[:n]
+
+
+def _lay_top_bar(post_text, out, kicker, headline, accent, photo_path=None, seed=None):
+    """Content pinned to the TOP; airy space below. Distinct from a centered stack."""
+    img = Image.new("RGB", (_LW, _LH), PAPER).convert("RGBA")
+    _motif(img, accent)
+    draw = ImageDraw.Draw(img)
+    m, top = 90, 120
+    _kicker_tab(draw, m, top, kicker, accent)
+    y = top + 66
+    fh, hl, lh = _fit_head(draw, headline, _LW - 2 * m, 98, 52, 3)
+    for ln in hl:
+        draw.text((m, y), ln, font=fh, fill=INK)
+        y += lh
+    _rule(draw, m, y + 18, accent)
+    y += 52
+    fs = _font("NunitoSans.ttf", 28)
+    for ln in _body_lines(draw, post_text, fs, _LW - 2 * m, 3):
+        draw.text((m, y), ln, font=fs, fill=(84, 98, 112))
+        y += 40
+    _footer_bar(img, draw, m)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out, "PNG")
+    return "top-bar"
+
+
+def _lay_corner(post_text, out, kicker, headline, accent, photo_path=None, seed=None):
+    """Big headline anchored at the BOTTOM-left; open space + motif up top."""
+    img = Image.new("RGB", (_LW, _LH), PAPER).convert("RGBA")
+    _motif(img, accent)
+    draw = ImageDraw.Draw(img)
+    m, bar_h = 90, 76
+    _kicker_tab(draw, m, 120, kicker, accent)
+    fh, hl, lh = _fit_head(draw, headline, _LW - 2 * m, 120, 60, 3)
+    fs = _font("NunitoSans.ttf", 27)
+    support = _body_lines(draw, post_text, fs, _LW - 2 * m, 2)
+    sup_h = len(support) * 38
+    y = (_LH - bar_h - 44 - sup_h) - len(hl) * lh
+    for ln in hl:
+        draw.text((m, y), ln, font=fh, fill=INK)
+        y += lh
+    _rule(draw, m, y + 14, accent)
+    y += 34
+    for ln in support:
+        draw.text((m, y), ln, font=fs, fill=(84, 98, 112))
+        y += 38
+    _footer_bar(img, draw, m)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out, "PNG")
+    return "corner"
+
+
+def _lay_side_band(post_text, out, kicker, headline, accent, photo_path=None, seed=None):
+    """Vertical split: full-height accent band on the left, content on the right."""
+    img = Image.new("RGB", (_LW, _LH), PAPER).convert("RGBA")
+    bw = int(_LW * 0.36)
+    band = _vgrad(bw, _LH, _lighten(accent, 0.06),
+                  tuple(int(c * 0.82) for c in accent))
+    img.paste(band, (0, 0))
+    draw = ImageDraw.Draw(img)
+    kf = _face(_design()["kfont"][0], 24, _design()["kfont"][1])
+    _draw_tracked(draw, (56, 120), (kicker or "").upper(), kf, (255, 255, 255), 3)
+    # Brand mark on the band: real logo if present, else the name in white.
+    if tenants.logo_full().exists():
+        _place_logo_footer(img, 56, _LH - 150, 46, on_dark=True)
+        dd = _font("NunitoSans.ttf", 22)
+        draw.text((56, _LH - 88), _domain(), font=dd, fill=(235, 242, 248))
+    else:
+        nf = _face(_design()["head"][0], 40, _design()["head"][1])
+        name = (tenants.account().get("name") or "").strip()
+        ny = _LH - 150
+        for ln in _wrap(draw, name, nf, bw - 96)[:3]:
+            draw.text((56, ny), ln, font=nf, fill=(255, 255, 255))
+            ny += 46
+        dd = _font("NunitoSans.ttf", 22)
+        draw.text((56, _LH - 60), _domain(), font=dd, fill=(235, 242, 248))
+    rx = bw + 70
+    colw = _LW - rx - 70
+    fh, hl, lh = _fit_head(draw, headline, colw, 76, 40, 4)
+    fs = _font("NunitoSans.ttf", 26)
+    support = _body_lines(draw, post_text, fs, colw, 4)
+    block = len(hl) * lh + 30 + len(support) * 36
+    y = max(110, (_LH - block) // 2)
+    for ln in hl:
+        draw.text((rx, y), ln, font=fh, fill=INK)
+        y += lh
+    _rule(draw, rx, y + 14, accent)
+    y += 30
+    for ln in support:
+        draw.text((rx, y), ln, font=fs, fill=(84, 98, 112))
+        y += 36
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out, "PNG")
+    return "side-band"
+
+
+def _lay_frame(post_text, out, kicker, headline, accent, photo_path=None, seed=None):
+    """Inset bordered card floating on a soft brand-tinted background."""
+    tint = _lighten(accent, 0.85)
+    img = Image.new("RGB", (_LW, _LH), tint).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    m = 62
+    draw.rounded_rectangle([m, m, _LW - m, _LH - m], radius=26, fill=PAPER)
+    draw.rounded_rectangle([m, m, _LW - m, _LH - m], radius=26, outline=accent, width=2)
+    inm = m + 66
+    colw = _LW - 2 * inm
+    centered = _design()["align"] == "center"
+    cx = _LW // 2
+    fh, hl, lh = _fit_head(draw, headline, colw, 80, 42, 4)
+    fs = _font("NunitoSans.ttf", 26)
+    support = _body_lines(draw, post_text, fs, colw, 3)
+    kh = 54
+    block = kh + len(hl) * lh + 40 + len(support) * 36
+    y = (_LH - block) // 2 - 10
+    if centered:
+        kw = _kicker_width(draw, kicker)
+        _kicker_tab(draw, cx - kw // 2, y, kicker, accent)
+    else:
+        _kicker_tab(draw, inm, y, kicker, accent)
+    y += kh
+    for ln in hl:
+        lw = draw.textlength(ln, font=fh)
+        x = (cx - lw / 2) if centered else inm
+        draw.text((x, y), ln, font=fh, fill=INK)
+        y += lh
+    _rule(draw, cx if centered else inm, y + 16, accent, centered=centered)
+    y += 40
+    for ln in support:
+        lw = draw.textlength(ln, font=fs)
+        x = (cx - lw / 2) if centered else inm
+        draw.text((x, y), ln, font=fs, fill=(84, 98, 112))
+        y += 36
+    lf_y = _LH - m - 58
+    _place_logo_footer(img, inm, lf_y, 40, on_dark=False)
+    fd = _font("NunitoSans.ttf", 22)
+    dw = draw.textlength(_domain(), font=fd)
+    draw.text((_LW - inm - dw, lf_y + 8), _domain(), font=fd, fill=(140, 152, 166))
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out, "PNG")
+    return "frame"
+
+
+# Each bright design owns a distinct set of layouts (primary first). Photo and
+# list layouts are shared but only used when the post has a photo / a list.
+_DESIGN_LAYOUTS = {
+    "soft-rounded": ["top-bar", "editorial", "checklist"],
+    "friendly-round": ["center-hero", "frame", "checklist"],
+    "elegant-serif": ["frame", "editorial"],
+    "bold-impact": ["side-band", "corner", "bold-color"],
+    "modern-grotesk": ["corner", "side-band", "editorial"],
+}
+
+
+def _render_designed(post_text, out_path, kicker, headline, accent,
+                     format_id, photo_path, avoid, rng):
+    """Route a bright account's post to one of ITS design's distinct layouts."""
+    did = current_design_id()
+    pool = list(_DESIGN_LAYOUTS.get(did, ["center-hero"]))
+    has_list = bool(_list_items(post_text))
+    valid = []
+    for t in pool:
+        if t == "editorial" and not photo_path:
+            continue
+        if t == "checklist" and not has_list:
+            continue
+        valid.append(t)
+    if not valid:
+        valid = ["center-hero"]
+    fresh = [t for t in valid if t not in (avoid or set())]
+    t = rng.choice(fresh or valid)
+    if t == "center-hero":
+        return render_light_statement(post_text, out_path, kicker, headline, accent)
+    if t == "top-bar":
+        return _lay_top_bar(post_text, out_path, kicker, headline, accent)
+    if t == "corner":
+        return _lay_corner(post_text, out_path, kicker, headline, accent)
+    if t == "side-band":
+        return _lay_side_band(post_text, out_path, kicker, headline, accent)
+    if t == "frame":
+        return _lay_frame(post_text, out_path, kicker, headline, accent)
+    if t == "bold-color":
+        return render_bold_color(post_text, out_path, kicker, headline, accent)
+    if t == "checklist":
+        return render_checklist(post_text, out_path, kicker, headline, accent)
+    if t == "editorial":
+        return render_editorial(post_text, out_path, kicker, headline, accent, photo_path)
+    return render_light_statement(post_text, out_path, kicker, headline, accent)
+
+
 def render_post_graphic(post_text, out_path, kicker="", headline="",
                         format_id="", photo_path=None, accent=None, seed=None,
                         avoid=None):
@@ -1429,6 +1637,11 @@ def render_post_graphic(post_text, out_path, kicker="", headline="",
     avoid = set(avoid or [])
     has_list = bool(_list_items(post_text))
     has_stat = _first_stat(post_text, headline) is not None
+
+    # Bright accounts render in their own distinct per-design layouts.
+    if _style() == "bright":
+        return _render_designed(post_text, out_path, kicker, headline, accent,
+                                format_id, photo_path, avoid, rng)
 
     pool = list(_FORMAT_POOL.get(format_id or "", []))
     if not pool:
