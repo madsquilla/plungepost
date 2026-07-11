@@ -335,6 +335,8 @@ def _render(page, title):
     ready = [a for a in approved if not a.get("scheduled_at")]
     history = list(reversed(store.read_history()))
     cur_slug = tenants.current()
+    _lf = tenants.logo_full(cur_slug)
+    logo_v = int(_lf.stat().st_mtime) if _lf.exists() else 0
     return render_template_string(
         TEMPLATE,
         page=page,
@@ -354,6 +356,7 @@ def _render(page, title):
         current_name=tenants.account(cur_slug).get("name", cur_slug),
         account=tenants.account(cur_slug),
         current_style=tenants.style(cur_slug),
+        logo_v=logo_v,
     )
 
 
@@ -727,6 +730,33 @@ def account_save():
     return redirect(url_for("account_settings"))
 
 
+@app.route("/account/logo", methods=["POST"])
+def account_logo():
+    f = request.files.get("logo")
+    if not f or not f.filename:
+        flash("Choose an image file first.", "err")
+        return redirect(url_for("account_settings"))
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+        img = Image.open(BytesIO(f.read())).convert("RGBA")
+        # Cap size so a huge upload does not bloat every card render.
+        if img.width > 900:
+            img = img.resize((900, max(1, round(img.height * 900 / img.width))))
+        out = tenants.tenant_dir() / "logo_full.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img.save(out, "PNG")
+        # A hand-picked logo replaces any prior mark too, so cards stay coherent.
+        mark = tenants.tenant_dir() / "logo_mark.png"
+        if mark.exists():
+            mark.unlink()
+        flash("Logo updated.", "ok")
+    except Exception as exc:  # noqa: BLE001
+        flash(f"Could not read that image: {exc}", "err")
+    return redirect(url_for("account_settings"))
+
+
 @app.route("/account/verify", methods=["POST"])
 def account_verify():
     """Confirm the saved token belongs to the saved Page, and show its name."""
@@ -1028,6 +1058,11 @@ TEMPLATE = r"""
   .radiobox .hint2{font-weight:400;color:var(--mut);font-size:12px;}
   .danger-panel{border-color:#f0cfd4;}
   .danger-panel h3{color:#b23a4e;}
+  .logo-preview{display:inline-flex;align-items:center;justify-content:center;
+    padding:16px 20px;margin:4px 0 12px;background:
+    repeating-conic-gradient(#eef1f4 0% 25%, #fff 0% 50%) 50% / 20px 20px;
+    border:1px solid var(--bd);border-radius:12px;max-width:100%;}
+  .logo-preview img{max-height:80px;max-width:320px;display:block;}
   .acct-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
   @media(max-width:1000px){
     .layout{grid-template-columns:1fr;}
@@ -1101,7 +1136,7 @@ TEMPLATE = r"""
 </div>
 <div class="layout">
   <aside class="sidebar">
-    <div class="side-logo"><img src="{{ url_for('brand', name='logo_full.png') }}?v={{ current_slug }}" alt="{{ current_name }}"></div>
+    <div class="side-logo"><img src="{{ url_for('brand', name='logo_full.png') }}?v={{ logo_v }}" alt="{{ current_name }}"></div>
     <div class="acct-switch">
       <select id="acctSelect" onchange="switchAcct(this.value)">
         {% for a in accounts %}<option value="{{ a.slug }}" {{ 'selected' if a.slug==current_slug }}>{{ a.name }}</option>{% endfor %}
@@ -1252,6 +1287,16 @@ TEMPLATE = r"""
             <label class="radiobox {{ 'on' if current_style=='dark' }}"><input type="radio" name="style" value="dark" {{ 'checked' if current_style=='dark' }}> Dark &amp; premium <span class="hint2">tech/security brands</span></label>
           </div>
           <button class="btn primary" type="submit" style="margin-top:14px;">Save changes</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h3>Logo</h3>
+        <p class="hint">Shown on every post graphic. A transparent PNG looks best. If auto-detection grabbed the wrong image (like a website screenshot), upload the real logo here.</p>
+        <div class="logo-preview"><img src="{{ url_for('brand', name='logo_full.png') }}?v={{ logo_v }}" alt="current logo"></div>
+        <form method="post" action="{{ url_for('account_logo') }}" enctype="multipart/form-data">
+          <input type="file" name="logo" accept="image/png,image/jpeg,image/webp">
+          <button class="btn primary" type="submit" style="margin-top:10px;">Upload logo</button>
         </form>
       </div>
 

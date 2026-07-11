@@ -56,7 +56,9 @@ class _TextExtractor(HTMLParser):
         self._skip = 0
         self.chunks: list[str] = []
         self.links: list[tuple[str, str]] = []   # (href, anchor text)
-        self.logos: list[str] = []
+        self.logos: list[str] = []               # <img> that look like a logo
+        self.icons: list[str] = []               # apple-touch-icon / rel=icon
+        self.og_images: list[str] = []           # og:image (often a screenshot)
         self.theme_colors: list[str] = []        # explicit brand color signals
         self._cur_href: str | None = None
         self._cur_anchor: list[str] = []
@@ -73,10 +75,17 @@ class _TextExtractor(HTMLParser):
             hint = (a.get("alt", "") + " " + src + " " + a.get("class", "")).lower()
             if "logo" in hint and src:
                 self.logos.append(src)
+        if tag == "link":
+            rel = (a.get("rel") or "").lower()
+            href = a.get("href") or ""
+            # apple-touch-icon and rel=icon are almost always the real brand
+            # mark (square), unlike og:image which is usually a hero screenshot.
+            if href and ("apple-touch-icon" in rel or "icon" in rel):
+                self.icons.append(href)
         if tag == "meta":
             name = (a.get("name") or "").lower()
             if a.get("property") == "og:image" and a.get("content"):
-                self.logos.append(a["content"])
+                self.og_images.append(a["content"])
             # <meta name="theme-color"> / msapplication-TileColor are the site's
             # declared brand color -- the strongest single signal.
             if name in ("theme-color", "msapplication-tilecolor") and a.get("content"):
@@ -126,6 +135,8 @@ def scrape_site(website: str, progress=_noop) -> dict:
     ex.feed(home_html)
     pages = [{"url": base, "text": " ".join(ex.chunks)}]
     logos = list(ex.logos)
+    icons = list(ex.icons)
+    og_images = list(ex.og_images)
     theme_colors = list(ex.theme_colors)
     # Also scan the raw homepage CSS/markup for the most-used saturated hex
     # colors -- a good secondary brand-color signal when there is no meta tag.
@@ -157,6 +168,7 @@ def scrape_site(website: str, progress=_noop) -> dict:
         logos.extend(ex2.logos)
 
     return {"base": base, "pages": pages, "logos": logos,
+            "icons": icons, "og_images": og_images,
             "theme_colors": theme_colors}
 
 
@@ -403,20 +415,50 @@ def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, li
 # ---------------------------------------------------------------------------
 # Logo: download from the site, else render a wordmark
 # ---------------------------------------------------------------------------
-def _download_logo(logos: list[str], base: str) -> bytes | None:
-    for src in logos:
+def _looks_like_screenshot(content: bytes) -> bool:
+    """A wide landscape raster (like an og:image hero) is a screenshot, not a
+    logo. Real logos/marks are square-ish or a horizontal wordmark."""
+    from io import BytesIO
+
+    from PIL import Image
+    try:
+        w, h = Image.open(BytesIO(content)).size
+    except Exception:
+        return True
+    if h == 0:
+        return True
+    ar = w / h
+    # og:image heroes are ~1.9:1 and large; reject clearly screenshot-shaped.
+    return (w >= 900 and 1.4 <= ar <= 2.4) or ar > 6
+
+
+def _download_logo(scrape: dict, base: str | None = None) -> bytes | None:
+    """Find the site's real logo. Prefers <img> logos and apple-touch/rel icons
+    (actual brand marks) over og:image, and rejects screenshot-shaped images."""
+    base = base or scrape.get("base", "")
+    # Priority: header/nav <img> logos, then apple-touch/rel icons, then (only
+    # as a last resort) og:image, which is usually a hero screenshot.
+    ordered = (scrape.get("logos", []) + scrape.get("icons", [])
+               + scrape.get("og_images", []))
+    fallback: bytes | None = None
+    for src in ordered:
         url = urljoin(base + "/", src)
-        if url.lower().endswith(".svg"):
+        if url.lower().split("?")[0].endswith(".svg"):
             continue  # Pillow can't open SVG without extra deps
         try:
             resp = requests.get(url, headers=_UA, timeout=REQUEST_TIMEOUT)
-            if resp.status_code == 200 and len(resp.content) > 800:
-                ctype = resp.headers.get("content-type", "")
-                if "image" in ctype and "svg" not in ctype:
-                    return resp.content
         except requests.RequestException:
             continue
-    return None
+        if resp.status_code != 200 or len(resp.content) < 800:
+            continue
+        ctype = resp.headers.get("content-type", "")
+        if "image" not in ctype or "svg" in ctype:
+            continue
+        if _looks_like_screenshot(resp.content):
+            fallback = fallback or resp.content   # keep as last-ditch option
+            continue
+        return resp.content
+    return fallback
 
 
 def _render_wordmark(name: str, accent: str) -> bytes:
@@ -464,7 +506,7 @@ def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str =
     brand, themes = build_brand_and_themes(name, base, scrape)
 
     progress("Fetching the logo...")
-    logo_bytes = _download_logo(scrape.get("logos", []), base)
+    logo_bytes = _download_logo(scrape, base)
 
     # Derive the brand colors from the site + logo unless the user chose to
     # set them by hand. The passed accents are the fallback either way.
@@ -503,7 +545,7 @@ def rebuild_content(slug: str, auto_colors: bool = True, progress=None) -> str:
     brand, themes = build_brand_and_themes(name, base, scrape)
 
     progress("Fetching the logo...")
-    logo_bytes = _download_logo(scrape.get("logos", []), base)
+    logo_bytes = _download_logo(scrape, base)
 
     accent = acct.get("accent", "#2ecc71")
     accent2 = acct.get("accent2", "#2b6cc4")
