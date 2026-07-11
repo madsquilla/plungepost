@@ -132,29 +132,32 @@ def main() -> int:
         _die(f"/me/accounts failed: {accounts.json().get('error', accounts.text)}")
 
     pages = accounts.json().get("data", [])
-    match = next((p for p in pages if p.get("id") == args.page_id), None)
-    if not match:
-        names = ", ".join(f"{p.get('name')} ({p.get('id')})" for p in pages) or "none"
+    if not pages:
         _die(
-            f"Page id {args.page_id} not found among the Pages you manage: {names}"
+            "You do not manage any Pages with this token (or pages_show_list was "
+            "not granted). Make sure you are an admin of the Page and re-generate "
+            "the user token with both Pages selected."
         )
 
-    page_token = match.get("access_token")
-    if not page_token:
-        _die(
-            "No access_token returned for the Page. The user token likely lacks "
-            "pages_manage_posts / pages_read_engagement."
-        )
-
-    print("\n" + "=" * 70)
-    print("SUCCESS. Long-lived Page token for:", match.get("name"))
-    print("=" * 70)
-    print("\nPaste these two lines into your .env (replace the existing values):\n")
-    print(f"META_PAGE_ID={match.get('id')}")
-    print(f"META_PAGE_ACCESS_TOKEN={page_token}")
-    print(
-        "\nThen verify with:  .\\.venv\\Scripts\\python.exe tools\\verify_token.py\n"
-    )
+    # Print a long-lived Page token for EVERY page you manage, so a multi-account
+    # setup can paste each into that account's settings in one go.
+    print("\n" + "=" * 72)
+    print("SUCCESS. Long-lived Page tokens (these do NOT expire while you stay")
+    print("an admin and the app/password are unchanged):")
+    print("=" * 72)
+    for p in pages:
+        tok = p.get("access_token")
+        print(f"\n  Page:     {p.get('name')}")
+        print(f"  Page ID:  {p.get('id')}")
+        if tok:
+            print(f"  Token:    {tok}")
+        else:
+            print("  Token:    (none -- missing pages_manage_posts on this page)")
+    print("\n" + "-" * 72)
+    print("In PlungePost: open each account, go to Account Settings -> Facebook")
+    print("connection, and paste its Page ID + token, then Save. Use Verify to")
+    print("confirm it points at the right Page before publishing.")
+    print("-" * 72 + "\n")
     return 0
 
 
