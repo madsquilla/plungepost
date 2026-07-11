@@ -10,11 +10,11 @@ from pathlib import Path
 import images
 import imagecard
 import store
+import tenants
 
 logger = logging.getLogger("skysystems.cards")
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-CARDS_DIR = _REPO_ROOT / "data" / "cards"
 
 
 def build_card(item: dict) -> dict:
@@ -23,11 +23,13 @@ def build_card(item: dict) -> dict:
     Never raises: a post must still go out even if imagery fails (it falls back
     to a text-only card, or no card at all on hard failure).
     """
-    kicker = item.get("image_kicker") or "Austin, Texas"
-    query = item.get("image_query") or item.get("theme") or "cybersecurity technology"
-    out = CARDS_DIR / f"{item['id']}.png"
+    cards_dir = tenants.cards_dir()
+    cards_dir.mkdir(parents=True, exist_ok=True)
+    kicker = item.get("image_kicker") or ""
+    query = item.get("image_query") or item.get("theme") or "professional business"
+    out = cards_dir / f"{item['id']}.png"
     try:
-        src_photo = CARDS_DIR / f"_src_{item['id']}.jpg"
+        src_photo = cards_dir / f"_src_{item['id']}.jpg"
         photo = images.fetch_stock_photo(query, src_photo)
         # Avoid the few most-recently-used designs so the feed keeps rotating.
         try:
@@ -49,6 +51,7 @@ def build_card(item: dict) -> dict:
             except OSError:
                 pass
         item["card_path"] = str(out.relative_to(_REPO_ROOT)).replace("\\", "/")
+        item["card_account"] = tenants.current()
         logger.info("Built card (%s) -> %s", item["image_style"], item["card_path"])
     except Exception as exc:  # noqa: BLE001 -- imagery must never block a post
         logger.warning("Card rendering failed (%s); post will be text-only.", exc)

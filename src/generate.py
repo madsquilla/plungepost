@@ -21,8 +21,8 @@ from typing import Any
 
 import anthropic
 
+import content
 from content import (
-    BRAND,
     POST_FORMATS,
     POST_LENGTHS,
     build_system_prompt,
@@ -95,7 +95,7 @@ def _build_user_prompt(
         lines.append(f"Target vertical for this post: {vertical}")
     lines.append(f"FORMAT for this post (follow it): {fmt['instruction']}")
     lines.append(f"LENGTH for this post: {length['instruction']}")
-    link = theme.get("link") or BRAND["website"]
+    link = theme.get("link") or content.brand()["website"]
     lines.append(
         f"CAPTION LINK for this post (put this EXACT URL in the caption, do not "
         f"change it to the homepage): {link}"
@@ -156,7 +156,7 @@ def _parse_response(raw_text: str) -> dict[str, Any]:
     # default if the model omitted it.
     caption = _s("caption")
     if not caption:
-        caption = f"{BRAND['website']}\n\n#Cybersecurity #ManagedIT #AustinTX"
+        caption = content.brand().get("website", "")
 
     return {
         "post_text": post_text,
@@ -180,7 +180,7 @@ def _make_item(parsed: dict[str, Any], theme_id: str) -> dict[str, Any]:
         "image_headline": parsed["image_headline"],
         "image_kicker": parsed["image_kicker"],
         "image_query": parsed["image_query"],
-        "link": BRAND["website"],
+        "link": content.brand()["website"],
         "status": "pending",
     }
 
@@ -216,7 +216,7 @@ def generate_post(
     item = _make_item(parsed, theme["id"])
     item["format"] = fmt["id"]
     item["length"] = length["id"]
-    item["link"] = theme.get("link") or BRAND["website"]
+    item["link"] = theme.get("link") or content.brand()["website"]
     logger.info("Generated post id=%s (%d chars)", item["id"], len(item["post_text"]))
     return item
 
@@ -240,7 +240,7 @@ def _build_custom_prompt(
         "not give you.",
         f"FORMAT for this post (follow it): {fmt['instruction']}",
         f"LENGTH for this post: {length['instruction']}",
-        f"The clickable link {BRAND['website']} and hashtags go in the caption.",
+        f"The clickable link {content.brand()["website"]} and hashtags go in the caption.",
         "",
         "Return ONLY the JSON object described in your instructions.",
     ]

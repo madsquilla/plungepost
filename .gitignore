@@ -8,6 +8,12 @@ data/approved.json
 data/history.json
 data/settings.json
 
+# Per-account (multi-tenant) data -- holds Facebook tokens + each account's
+# queues, cards, brand, and logo. NEVER commit (secrets + runtime state).
+# On first run the app migrates the legacy data/ + assets/ + .env into
+# tenants/skysystems/, then this dir is the live per-account store.
+tenants/
+
 # Generated runtime artifacts (regenerated each run)
 data/dry_runs/
 data/cards/

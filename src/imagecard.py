@@ -21,6 +21,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+import tenants
+
 _LIST_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)")
 _LABEL_RE = re.compile(r"^\s*([A-Za-z]{3,12}):\s+(\S.*)")
 
@@ -40,8 +42,31 @@ PAD_X = 80
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _FONT_DIR = _ASSETS / "fonts"
+# Packaged fallbacks (used only if the current account has no logo yet).
 _LOGO_FULL = _ASSETS / "logo_full.png"
 _LOGO_MARK = _ASSETS / "logo_mark.png"
+
+
+def _logo_full_path() -> Path:
+    """The current account's full logo, falling back to the packaged one."""
+    p = tenants.logo_full()
+    return p if p.exists() else _LOGO_FULL
+
+
+def _logo_mark_path() -> Path:
+    """The current account's icon mark, falling back to the packaged one."""
+    p = tenants.logo_mark()
+    return p if p.exists() else _LOGO_MARK
+
+
+def _domain() -> str:
+    """The current account's bare domain for card footers."""
+    return tenants.domain()
+
+
+def _accent_pick(rng) -> tuple[int, int, int]:
+    """Pick one of the current account's two accent colors."""
+    return rng.choice(tenants.accent_colors())
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +181,7 @@ def _glow(base: Image.Image, fx: float, fy: float, color) -> None:
 
 def _watermark(base: Image.Image) -> None:
     """Large, faint icon mark bleeding off the right edge."""
-    mark = Image.open(_LOGO_MARK).convert("RGBA")
+    mark = Image.open(_logo_mark_path()).convert("RGBA")
     target_h = 520
     scale = target_h / mark.height
     mark = mark.resize((int(mark.width * scale), target_h))
@@ -199,7 +224,7 @@ def _tracked_width(draw, text: str, font, tracking: int) -> float:
 
 
 def _place_logo_full(base: Image.Image, x: int, y: int, height: int) -> int:
-    logo = Image.open(_LOGO_FULL).convert("RGBA")
+    logo = Image.open(_logo_full_path()).convert("RGBA")
     scale = height / logo.height
     logo = logo.resize((int(logo.width * scale), height))
     base.alpha_composite(logo, (x, y))
@@ -284,12 +309,12 @@ def render_card(
     fy = H - logo_h - 40
     if centered:
         # Center the logo at the bottom; no domain (keeps it clean).
-        logo = Image.open(_LOGO_FULL).convert("RGBA")
+        logo = Image.open(_logo_full_path()).convert("RGBA")
         lw = int(logo.width * (logo_h / logo.height))
         _place_logo_full(img, (W - lw) // 2, fy, logo_h)
     else:
         _place_logo_full(img, PAD_X, fy, logo_h)
-        domain = "skyusa.us"
+        domain = _domain()
         dom_w = draw.textlength(domain, font=f_domain)
         draw.text(
             (W - PAD_X - dom_w, fy + logo_h // 2 - 16),
@@ -354,7 +379,7 @@ def render_photo_card(
     if variant is None:
         variant = rng.choice(PHOTO_VARIANTS)
     if accent is None:
-        accent = rng.choice([GREEN_SOFT, BLUE])
+        accent = _accent_pick(rng)
 
     photo = Image.open(photo_path).convert("RGB")
     photo = ImageOps.fit(photo, (W, H), method=Image.LANCZOS)  # cover-crop
@@ -409,7 +434,7 @@ def render_photo_card(
         y += sub_lh
 
     _place_logo_full(img, PAD_X, fy, logo_h)
-    domain = "skyusa.us"
+    domain = _domain()
     dom_w = draw.textlength(domain, font=f_domain)
     draw.text((W - PAD_X - dom_w, fy + logo_h // 2 - 16), domain, font=f_domain, fill=light)
 
@@ -577,15 +602,15 @@ def _footer_navy(img, draw, margin, light=False):
     fy = _LH - 84
     _place_logo_full(img, margin, fy, 50)
     fd = _font("Rajdhani-SemiBold.ttf", 24)
-    dw = draw.textlength("skyusa.us", font=fd)
-    draw.text((_LW - margin - dw, fy + 12), "skyusa.us", font=fd, fill=DOMAIN_DIM)
+    dw = draw.textlength(_domain(), font=fd)
+    draw.text((_LW - margin - dw, fy + 12), _domain(), font=fd, fill=DOMAIN_DIM)
 
 
 def render_statement(post_text, out_path, kicker, headline, accent, seed=None):
     """Bold typographic poster, no photo: kicker tab + huge headline + lead."""
     img = _premium_bg(accent, (seed or 0))
     try:
-        mk = Image.open(_LOGO_MARK).convert("RGBA")
+        mk = Image.open(_logo_mark_path()).convert("RGBA")
         th = 600
         mk = mk.resize((int(mk.width * th / mk.height), th))
         a = mk.split()[3].point(lambda p: int(p * 0.07))
@@ -695,8 +720,8 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
     draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
     _place_logo_full(img, margin, _LH - bar_h + (bar_h - 44) // 2, 44)
     fd = _font("Rajdhani-SemiBold.ttf", 24)
-    dw = draw.textlength("skyusa.us", font=fd)
-    draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 24) // 2), "skyusa.us",
+    dw = draw.textlength(_domain(), font=fd)
+    draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 24) // 2), _domain(),
               font=fd, fill=(150, 166, 182))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(out_path, "PNG")
@@ -735,9 +760,9 @@ def _footer_bar(img, draw, margin, bar_h=76):
     draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
     _place_logo_full(img, margin, _LH - bar_h + (bar_h - 42) // 2, 42)
     fd = _font("Rajdhani-SemiBold.ttf", 23)
-    dw = draw.textlength("skyusa.us", font=fd)
+    dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 22) // 2),
-              "skyusa.us", font=fd, fill=(150, 166, 182))
+              _domain(), font=fd, fill=(150, 166, 182))
 
 
 def render_light_statement(post_text, out_path, kicker, headline, accent, seed=None):
@@ -870,8 +895,8 @@ def render_two_block(post_text, out_path, kicker, headline, accent, seed=None):
         by += line_h
     _place_logo_full(img, margin, _LH - 74, 44)
     fd = _font("Rajdhani-SemiBold.ttf", 23)
-    dw = draw.textlength("skyusa.us", font=fd)
-    draw.text((_LW - margin - dw, _LH - 56), "skyusa.us", font=fd, fill=(150, 166, 182))
+    dw = draw.textlength(_domain(), font=fd)
+    draw.text((_LW - margin - dw, _LH - 56), _domain(), font=fd, fill=(150, 166, 182))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(out_path, "PNG")
     return "two-block"
@@ -938,7 +963,8 @@ def render_quote(post_text, out_path, kicker, headline, accent, seed=None):
         y += head_lh
     draw = ImageDraw.Draw(img)
     fk = _font("Rajdhani-SemiBold.ttf", 24)
-    _draw_tracked(draw, (margin + 36, y + 16), (kicker or "SkySystems").upper(),
+    _draw_tracked(draw, (margin + 36, y + 16),
+                  (kicker or tenants.account().get("name", "")).upper(),
                   fk, accent, 4)
     _footer_navy(img, draw, margin)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -1097,7 +1123,7 @@ def render_post_graphic(post_text, out_path, kicker="", headline="",
     Returns the template name used (also stored as image_style)."""
     rng = random.Random(seed)
     if accent is None:
-        accent = rng.choice([GREEN_SOFT, BLUE])
+        accent = _accent_pick(rng)
     headline = (headline or "").strip()
     avoid = set(avoid or [])
     has_list = bool(_list_items(post_text))
@@ -1160,7 +1186,7 @@ def render_landscape_card(
     photo to the brand palette so the feed reads like a campaign."""
     rng = random.Random(seed)
     if accent is None:
-        accent = rng.choice([GREEN_SOFT, BLUE])
+        accent = _accent_pick(rng)
     paragraphs = [p for p in _clean_body_for_image(post_text).split("\n") if p.strip()]
     headline = (headline or "").strip()
     footer_y = _LH - 84
@@ -1177,7 +1203,7 @@ def render_landscape_card(
         img.alpha_composite(photo, (panel_w, 0))
         # faint arrow-mark watermark in the panel
         try:
-            mk = Image.open(_LOGO_MARK).convert("RGBA")
+            mk = Image.open(_logo_mark_path()).convert("RGBA")
             th = 380
             mk = mk.resize((int(mk.width * th / mk.height), th))
             a = mk.split()[3].point(lambda p: int(p * 0.06))
@@ -1212,8 +1238,8 @@ def render_landscape_card(
                          kicker, headline, paragraphs, accent)
         _place_logo_full(img, 72, footer_y, 52)
         f_domain = _font("Rajdhani-SemiBold.ttf", 24)
-        dom_w = draw.textlength("skyusa.us", font=f_domain)
-        draw.text((_LW - 72 - dom_w, footer_y + 52 // 2 - 13), "skyusa.us",
+        dom_w = draw.textlength(_domain(), font=f_domain)
+        draw.text((_LW - 72 - dom_w, footer_y + 52 // 2 - 13), _domain(),
                   font=f_domain, fill=(216, 226, 238))
 
     out_path = Path(out_path)
@@ -1311,7 +1337,7 @@ def render_fulltext_card(
     """
     rng = random.Random(seed)
     if accent is None:
-        accent = rng.choice([GREEN_SOFT, BLUE])
+        accent = _accent_pick(rng)
     if variant is None:
         variant = rng.choice(FULLTEXT_VARIANTS) if photo_path else "branded"
 
@@ -1394,8 +1420,8 @@ def render_fulltext_card(
     logo_h = 60
     _place_logo_full(img, margin, footer_y, logo_h)
     f_domain = _font("Rajdhani-SemiBold.ttf", 26)
-    dom_w = draw.textlength("skyusa.us", font=f_domain)
-    draw.text((_FW - margin - dom_w, footer_y + logo_h // 2 - 14), "skyusa.us",
+    dom_w = draw.textlength(_domain(), font=f_domain)
+    draw.text((_FW - margin - dom_w, footer_y + logo_h // 2 - 14), _domain(),
               font=f_domain, fill=MUTED)
 
     out_path = Path(out_path)

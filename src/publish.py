@@ -16,6 +16,8 @@ from typing import Any
 
 import requests
 
+import tenants
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 logger = logging.getLogger("skysystems.publish")
@@ -34,12 +36,16 @@ class TokenExpiredError(PublishError):
 
 
 def _credentials() -> tuple[str, str]:
-    page_id = os.environ.get("META_PAGE_ID")
-    token = os.environ.get("META_PAGE_ACCESS_TOKEN")
+    # Per-account Page credentials (from the current tenant's account.json).
+    page_id, token = tenants.fb_creds()
+    # Fall back to env for a single-account / legacy setup.
+    page_id = page_id or os.environ.get("META_PAGE_ID", "")
+    token = token or os.environ.get("META_PAGE_ACCESS_TOKEN", "")
     if not page_id or not token:
         raise PublishError(
-            "META_PAGE_ID and META_PAGE_ACCESS_TOKEN must both be set in the "
-            "environment to publish."
+            "This account has no Facebook Page ID / access token set. Add them "
+            "in the account's settings (or META_PAGE_ID / "
+            "META_PAGE_ACCESS_TOKEN in the environment) to publish."
         )
     return page_id, token
 

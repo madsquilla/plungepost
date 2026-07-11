@@ -30,16 +30,18 @@ except ImportError:
 
 from flask import (
     Flask, abort, flash, jsonify, redirect, render_template_string, request,
-    send_from_directory, url_for,
+    send_from_directory, session, url_for,
 )
 
 import cards
+import content
 import generate as gen
+import onboard
 import publish as pub
 import store
+import tenants
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_CARDS_DIR = _REPO_ROOT / "data" / "cards"
 _ASSETS_DIR = _REPO_ROOT / "assets"
 
 logging.basicConfig(level=logging.INFO,
@@ -66,7 +68,85 @@ DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 DAY_OPTIONS = list(zip(DAYS, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]))
 
 
+# --- multi-tenant bootstrapping + per-request context ----------------------
+
+def _migrate_legacy_account() -> None:
+    """First-run migration: if there are no accounts yet, fold the existing
+    single-account setup (data/, assets/ logo, content.DEFAULT_BRAND, themes,
+    env FB creds) into tenants/skysystems/ so nothing is lost."""
+    if tenants.list_tenants():
+        return
+    logger.info("No accounts found; migrating existing setup into tenants/skysystems/")
+    legacy_data = _REPO_ROOT / "data"
+    themes_file = _REPO_ROOT / "data" / "themes.json"
+    themes = []
+    if themes_file.exists():
+        import json
+        try:
+            themes = json.loads(themes_file.read_text(encoding="utf-8"))
+        except Exception:
+            themes = []
+    if not themes:
+        # Fall back to a bundled themes.json at the repo root if present.
+        alt = _REPO_ROOT / "themes.json"
+        if alt.exists():
+            import json
+            try:
+                themes = json.loads(alt.read_text(encoding="utf-8"))
+            except Exception:
+                themes = []
+    logo_bytes = None
+    lf = _ASSETS_DIR / "logo_full.png"
+    if lf.exists():
+        logo_bytes = lf.read_bytes()
+    mark_bytes = None
+    lm = _ASSETS_DIR / "logo_mark.png"
+    if lm.exists():
+        mark_bytes = lm.read_bytes()
+    slug = tenants.create_tenant(
+        "skysystems", "SkySystems USA", "https://skyusa.us",
+        content.DEFAULT_BRAND, themes,
+        fb_page_id=os.environ.get("META_PAGE_ID", ""),
+        fb_token=os.environ.get("META_PAGE_ACCESS_TOKEN", ""),
+        accent="#2ecc71", accent2="#2b6cc4",
+        logo_bytes=logo_bytes, mark_bytes=mark_bytes,
+    )
+    # Move any existing queues/cards into the new tenant's data dir.
+    tdata = tenants.data_dir(slug)
+    if legacy_data.exists():
+        import shutil
+        for q in ("pending.json", "approved.json", "history.json", "settings.json"):
+            src = legacy_data / q
+            if src.exists():
+                shutil.copy2(src, tdata / q)
+        src_cards = legacy_data / "cards"
+        if src_cards.exists():
+            dst_cards = tenants.cards_dir(slug)
+            dst_cards.mkdir(parents=True, exist_ok=True)
+            for f in src_cards.glob("*.png"):
+                shutil.copy2(f, dst_cards / f.name)
+    logger.info("Migration complete -> tenants/%s", slug)
+
+
+def _current_slug() -> str:
+    """The account slug for this request (session, else the first account)."""
+    slug = session.get("acct")
+    if slug and tenants.exists(slug):
+        return slug
+    return tenants.current()
+
+
+@app.before_request
+def _bind_tenant():
+    """Bind the current account for this request/thread before any route runs."""
+    tenants.set_current(_current_slug())
+
+
 def _meta_ready() -> bool:
+    """Whether the CURRENT account can publish (has a Page id + token)."""
+    page_id, token = tenants.fb_creds()
+    if page_id and token:
+        return True
     return bool(os.environ.get("META_PAGE_ID") and os.environ.get("META_PAGE_ACCESS_TOKEN"))
 
 
@@ -187,9 +267,12 @@ def _do_publish(item) -> str:
 
 # --- background scheduler --------------------------------------------------
 
-def _scheduler_tick() -> None:
-    """One pass: publish any due scheduled posts, then run the daily auto-pilot."""
-    if not _meta_ready():
+def _scheduler_tick_one() -> None:
+    """One pass for the CURRENT account: publish any due scheduled posts."""
+    page_id, token = tenants.fb_creds()
+    if not (page_id and token) and not (
+        os.environ.get("META_PAGE_ID") and os.environ.get("META_PAGE_ACCESS_TOKEN")
+    ):
         return
     now = datetime.now()  # local time (set TZ env on the container)
     with _LOCK:
@@ -214,6 +297,16 @@ def _scheduler_tick() -> None:
             remaining.append(it)
         if changed:
             store.write_approved(remaining)
+
+
+def _scheduler_tick() -> None:
+    """One pass over EVERY account so scheduled posts publish for all tenants."""
+    for t in tenants.list_tenants():
+        tenants.set_current(t["slug"])
+        try:
+            _scheduler_tick_one()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Scheduler failed for account %s: %s", t["slug"], exc)
 
 
 def _scheduler_loop() -> None:
@@ -241,6 +334,7 @@ def _render(page, title):
     )
     ready = [a for a in approved if not a.get("scheduled_at")]
     history = list(reversed(store.read_history()))
+    cur_slug = tenants.current()
     return render_template_string(
         TEMPLATE,
         page=page,
@@ -255,6 +349,9 @@ def _render(page, title):
         day_options=DAY_OPTIONS,
         meta_ready=_meta_ready(),
         now_local=datetime.now().strftime("%Y-%m-%dT%H:%M"),
+        accounts=tenants.list_tenants(),
+        current_slug=cur_slug,
+        current_name=tenants.account(cur_slug).get("name", cur_slug),
     )
 
 
@@ -287,13 +384,17 @@ def published():
 def card(name):
     if not name.endswith(".png") or "/" in name or "\\" in name:
         abort(404)
-    return send_from_directory(_CARDS_DIR, name)
+    return send_from_directory(tenants.cards_dir(), name)
 
 
 @app.route("/brand/<path:name>")
 def brand(name):
+    """Serve the current account's logo (falling back to the packaged asset)."""
     if not name.endswith(".png") or "/" in name or "\\" in name:
         abort(404)
+    tenant_logo = tenants.tenant_dir() / name
+    if tenant_logo.exists():
+        return send_from_directory(tenants.tenant_dir(), name)
     return send_from_directory(_ASSETS_DIR, name)
 
 
@@ -515,6 +616,86 @@ def settings_save():
     return _back()
 
 
+# --- account switching + onboarding ----------------------------------------
+
+@app.route("/switch/<slug>", methods=["POST", "GET"])
+def switch_account(slug):
+    if tenants.exists(slug):
+        session["acct"] = slug
+        tenants.set_current(slug)
+        flash(f"Switched to {tenants.account(slug).get('name', slug)}.", "ok")
+    else:
+        flash("That account no longer exists.", "err")
+    return redirect(url_for("overview"))
+
+
+# Background onboarding progress (mirrors _GEN so the UI can show a live overlay).
+_ONB = {"active": False, "message": "Idle", "error": False, "slug": ""}
+
+
+def _run_onboard(name, website, fb_page_id, fb_token, accent, accent2):
+    try:
+        with _LOCK:
+            _ONB.update(message="Reading the website...", error=False, slug="")
+        slug = onboard.build_account(
+            name=name, website=website,
+            fb_page_id=fb_page_id, fb_token=fb_token,
+            accent=accent, accent2=accent2,
+            progress=lambda m: _ONB.update(message=m),
+        )
+        with _LOCK:
+            _ONB.update(message="Done", slug=slug)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Onboarding failed")
+        m = str(exc)
+        low = m.lower()
+        if "credit balance" in low:
+            m = "Anthropic API is out of credits. Add credits at console.anthropic.com."
+        elif "authentication" in low or "x-api-key" in low or "401" in low:
+            m = "Anthropic API key was rejected. Check ANTHROPIC_API_KEY in .env."
+        else:
+            m = "Onboarding failed: " + m[:160]
+        with _LOCK:
+            _ONB.update(error=True, message=m)
+    finally:
+        with _LOCK:
+            _ONB["active"] = False
+
+
+@app.route("/accounts/new", methods=["POST"])
+def account_new():
+    name = (request.form.get("name") or "").strip()
+    website = (request.form.get("website") or "").strip()
+    fb_page_id = (request.form.get("fb_page_id") or "").strip()
+    fb_token = (request.form.get("fb_token") or "").strip()
+    accent = (request.form.get("accent") or "#2ecc71").strip()
+    accent2 = (request.form.get("accent2") or "#2b6cc4").strip()
+    if not name or not website:
+        flash("Business name and website are both required.", "err")
+        return _back()
+    with _LOCK:
+        if _ONB["active"]:
+            flash("Already building an account -- hang tight.", "err")
+            return _back()
+        _ONB.update(active=True, message="Starting", error=False, slug="")
+    threading.Thread(
+        target=_run_onboard,
+        args=(name, website, fb_page_id, fb_token, accent, accent2),
+        daemon=True,
+    ).start()
+    return _back()
+
+
+@app.route("/onboard-status")
+def onboard_status():
+    with _LOCK:
+        data = dict(_ONB)
+    # When a new account finishes building, switch the session to it.
+    if data.get("slug") and not data.get("active"):
+        session["acct"] = data["slug"]
+    return jsonify(data)
+
+
 TEMPLATE = r"""
 {% macro render_post(p, kind, meta_ready, now_local) %}
 <article class="post">
@@ -708,6 +889,21 @@ TEMPLATE = r"""
   .gen-msg{color:#9fb0c0;font-size:14px;margin:6px 0 18px;min-height:18px;}
   .gen-track{height:9px;background:rgba(255,255,255,.12);border-radius:99px;overflow:hidden;}
   .gen-bar{height:100%;width:6%;background:linear-gradient(90deg,#2faa46,#4cd674);border-radius:99px;transition:width .45s ease;}
+  .acct-switch{display:flex;gap:6px;padding:0 4px 4px;align-items:center;}
+  .acct-switch select{flex:1;min-width:0;padding:8px 10px;font-size:13px;border-radius:9px;
+    background:rgba(255,255,255,.06);color:#e8eef5;border:1px solid rgba(255,255,255,.14);}
+  .acct-add{flex:0 0 auto;padding:8px 11px;font-size:12.5px;font-weight:600;cursor:pointer;
+    border-radius:9px;background:rgba(47,170,70,.16);color:#7fe39a;border:1px solid rgba(47,170,70,.4);}
+  .acct-add:hover{background:rgba(47,170,70,.26);}
+  .acct-card{text-align:left;}
+  .acct-card .gen-title{text-align:left;}
+  .acct-hint{color:#9fb0c0;font-size:13px;line-height:1.5;margin:6px 0 16px;}
+  .acct-card input{width:100%;margin-bottom:10px;padding:10px 12px;font-size:13.5px;border-radius:9px;
+    background:#0b1521;color:#e8eef5;border:1px solid #2a3a4d;}
+  .acct-card input[type=color]{width:44px;height:34px;padding:2px;margin:0;cursor:pointer;}
+  .acct-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+  .acct-row label{color:#9fb0c0;font-size:12.5px;margin:0;text-transform:none;letter-spacing:0;}
+  .acct-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
   @media(max-width:1000px){
     .layout{grid-template-columns:1fr;}
     .sidebar{position:sticky;top:0;z-index:30;height:auto;flex-direction:column;
@@ -748,9 +944,41 @@ TEMPLATE = r"""
     <button id="genClose" class="btn outline" style="display:none;margin-top:18px;" onclick="document.getElementById('genOverlay').style.display='none';">Dismiss</button>
   </div>
 </div>
+<div id="acctOverlay" class="gen-overlay">
+  <div class="gen-card acct-card">
+    <div class="gen-title" style="margin-bottom:4px;">Add an account</div>
+    <p class="acct-hint">Enter the business name and website. We read the site and auto-build the brand voice, services, content themes, and deep links. You can review everything after.</p>
+    <form id="acctForm" method="post" action="{{ url_for('account_new') }}" onsubmit="return startOnboard();">
+      <input name="name" placeholder="Business name (e.g. SparkleClean Co.)" required>
+      <input name="website" placeholder="Website (e.g. https://sparkleclean.com)" required>
+      <div class="acct-row">
+        <label>Brand colors</label>
+        <input type="color" name="accent" value="#2ecc71" title="Primary accent">
+        <input type="color" name="accent2" value="#2b6cc4" title="Secondary accent">
+      </div>
+      <input name="fb_page_id" placeholder="Facebook Page ID (optional)">
+      <input name="fb_token" placeholder="Facebook Page access token (optional)">
+      <div class="acct-actions">
+        <button type="button" class="btn outline" onclick="document.getElementById('acctOverlay').style.display='none';">Cancel</button>
+        <button type="submit" class="btn primary">Build account</button>
+      </div>
+    </form>
+    <div id="onbProg" style="display:none;text-align:center;margin-top:8px;">
+      <div class="gen-spin"></div>
+      <div id="onbMsg" class="gen-msg">Reading the website...</div>
+      <button id="onbClose" class="btn outline" style="display:none;" onclick="document.getElementById('acctOverlay').style.display='none';">Dismiss</button>
+    </div>
+  </div>
+</div>
 <div class="layout">
   <aside class="sidebar">
-    <div class="side-logo"><img src="{{ url_for('brand', name='logo_full.png') }}" alt="SkySystems USA"></div>
+    <div class="side-logo"><img src="{{ url_for('brand', name='logo_full.png') }}" alt="{{ current_name }}"></div>
+    <div class="acct-switch">
+      <select id="acctSelect" onchange="switchAcct(this.value)">
+        {% for a in accounts %}<option value="{{ a.slug }}" {{ 'selected' if a.slug==current_slug }}>{{ a.name }}</option>{% endfor %}
+      </select>
+      <button type="button" class="acct-add" title="Add account" onclick="document.getElementById('acctOverlay').style.display='flex';">+ Add</button>
+    </div>
     <nav class="side-nav">
       <a href="{{ url_for('overview') }}" class="{{ 'active' if page=='overview' }}">Overview</a>
       <a href="{{ url_for('review') }}" class="{{ 'active' if page=='review' }}">In Review <span class="n">{{ pending|length }}</span></a>
@@ -767,7 +995,7 @@ TEMPLATE = r"""
   <main class="main">
     <div class="topbar">
       <h1>{{ page_title }}</h1>
-      <p class="sub">SkySystems USA &middot; Post Studio</p>
+      <p class="sub">{{ current_name }} &middot; Post Studio</p>
     </div>
     <div class="content">
       {% with msgs = get_flashed_messages(with_categories=true) %}
@@ -902,6 +1130,28 @@ TEMPLATE = r"""
   });
   poll();
 })();
+function switchAcct(slug){
+  var f=document.createElement('form');f.method='post';f.action='/switch/'+slug;
+  document.body.appendChild(f);f.submit();
+}
+function startOnboard(){
+  var form=document.getElementById('acctForm');
+  document.getElementById('onbProg').style.display='block';
+  var data=new FormData(form);
+  fetch(form.action,{method:'POST',body:data}).then(function(){pollOnboard();});
+  return false;
+}
+function pollOnboard(){
+  var msg=document.getElementById('onbMsg');
+  fetch('/onboard-status').then(function(r){return r.json();}).then(function(s){
+    if(s.active){msg.textContent=s.message;msg.style.color='#9fb0c0';setTimeout(pollOnboard,900);}
+    else if(s.error){msg.textContent=s.message;msg.style.color='#ff9aa8';
+      document.getElementById('onbClose').style.display='inline-flex';}
+    else if(s.slug){msg.textContent='Done! Loading '+s.slug+'...';
+      setTimeout(function(){window.location.href='{{ url_for("overview") }}';},600);}
+    else {setTimeout(pollOnboard,900);}
+  }).catch(function(){setTimeout(pollOnboard,1500);});
+}
 </script>
 </body></html>
 """
@@ -910,6 +1160,14 @@ TEMPLATE = r"""
 def _start_scheduler():
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()
+
+
+# Run the one-time migration at import so it happens under any entrypoint
+# (python src/webapp.py, gunicorn, etc.), before the first request is served.
+try:
+    _migrate_legacy_account()
+except Exception:  # noqa: BLE001
+    logger.exception("Legacy-account migration failed (continuing).")
 
 
 if __name__ == "__main__":

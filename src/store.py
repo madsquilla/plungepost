@@ -28,12 +28,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+import tenants
 
-PENDING_PATH = _DATA_DIR / "pending.json"
-APPROVED_PATH = _DATA_DIR / "approved.json"
-HISTORY_PATH = _DATA_DIR / "history.json"
-SETTINGS_PATH = _DATA_DIR / "settings.json"
+
+def _p(name: str) -> Path:
+    """Path to a queue/settings file in the CURRENT account's data dir."""
+    return tenants.data_dir() / name
+
 
 DEDUP_WINDOW_DAYS = 30
 
@@ -47,8 +48,8 @@ _DEFAULT_SETTINGS = {
 
 def read_settings() -> dict[str, Any]:
     settings = dict(_DEFAULT_SETTINGS)
-    if SETTINGS_PATH.exists():
-        text = SETTINGS_PATH.read_text(encoding="utf-8").strip()
+    if _p("settings.json").exists():
+        text = _p("settings.json").read_text(encoding="utf-8").strip()
         if text:
             try:
                 data = json.loads(text)
@@ -60,13 +61,13 @@ def read_settings() -> dict[str, Any]:
 
 
 def write_settings(settings: dict[str, Any]) -> None:
-    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(SETTINGS_PATH.parent), suffix=".tmp")
+    _p("settings.json").parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(_p("settings.json").parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(settings, fh, indent=2)
             fh.write("\n")
-        os.replace(tmp, SETTINGS_PATH)
+        os.replace(tmp, _p("settings.json"))
     except Exception:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -105,15 +106,15 @@ def _write(path: Path, items: list[dict[str, Any]]) -> None:
 # --- Public read helpers ---------------------------------------------------
 
 def read_pending() -> list[dict[str, Any]]:
-    return _read(PENDING_PATH)
+    return _read(_p("pending.json"))
 
 
 def read_approved() -> list[dict[str, Any]]:
-    return _read(APPROVED_PATH)
+    return _read(_p("approved.json"))
 
 
 def read_history() -> list[dict[str, Any]]:
-    return _read(HISTORY_PATH)
+    return _read(_p("history.json"))
 
 
 # --- Public write helpers --------------------------------------------------
@@ -121,21 +122,21 @@ def read_history() -> list[dict[str, Any]]:
 def append_pending(item: dict[str, Any]) -> None:
     items = read_pending()
     items.append(item)
-    _write(PENDING_PATH, items)
+    _write(_p("pending.json"), items)
 
 
 def write_pending(items: list[dict[str, Any]]) -> None:
-    _write(PENDING_PATH, items)
+    _write(_p("pending.json"), items)
 
 
 def write_approved(items: list[dict[str, Any]]) -> None:
-    _write(APPROVED_PATH, items)
+    _write(_p("approved.json"), items)
 
 
 def append_history(item: dict[str, Any]) -> None:
     items = read_history()
     items.append(item)
-    _write(HISTORY_PATH, items)
+    _write(_p("history.json"), items)
 
 
 # --- Dedup support ---------------------------------------------------------
