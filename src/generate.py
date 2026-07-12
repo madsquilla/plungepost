@@ -131,19 +131,29 @@ def _strip_code_fences(text: str) -> str:
     return stripped.strip()
 
 
+def _loads_lenient(s: str) -> dict[str, Any]:
+    """json.loads that tolerates the model's common slips: literal newlines
+    inside strings (strict=False) and trailing commas before }/]."""
+    try:
+        return json.loads(s, strict=False)
+    except json.JSONDecodeError:
+        repaired = re.sub(r",(\s*[}\]])", r"\1", s)          # trailing commas
+        return json.loads(repaired, strict=False)
+
+
 def _parse_response(raw_text: str) -> dict[str, Any]:
     """Parse the model output into a dict, defensively."""
     cleaned = _strip_code_fences(raw_text)
     try:
-        data = json.loads(cleaned)
+        data = _loads_lenient(cleaned)
     except json.JSONDecodeError:
-        # Last resort: grab the first {...} block.
+        # Last resort: grab the outermost {...} block and repair it.
         match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if not match:
             raise GenerationError(
                 f"Model did not return JSON. Raw output:\n{raw_text[:500]}"
             )
-        data = json.loads(match.group(0))
+        data = _loads_lenient(match.group(0))
 
     post_text = (data.get("post_text") or "").strip()
     if not post_text:
