@@ -319,7 +319,12 @@ _SYSTEM = (
     "services, startups, e-commerce). mood=bright\n"
     "- tech-condensed: serious, technical, enterprise (IT, cybersecurity, "
     "finance, B2B software, industrial). mood=dark\n"
-    "Pick the single best fit for THIS business."
+    "Pick the single best fit for THIS business.\n\n"
+    "For 'colors', give two vivid, tasteful brand colors as #RRGGBB. Use the "
+    "site's real brand colors if it clearly has them; otherwise choose colors "
+    "that fit the industry and feel (e.g. fresh green/teal for cleaning, warm "
+    "gold for a boutique, bold red for a gym). Avoid greys and near-whites -- "
+    "the primary must be a real, saturated color."
 )
 
 
@@ -341,6 +346,7 @@ Return ONLY a single JSON object, no prose, no code fences, with this shape:
 {{
   "design": "one of: soft-rounded | friendly-round | elegant-serif | bold-impact | modern-grotesk | tech-condensed",
   "mood": "bright or dark (dark only for tech-condensed)",
+  "colors": ["#RRGGBB primary brand color", "#RRGGBB secondary"],
   "brand": {{
     "company": "the legal/display company name",
     "what": "a short phrase: what the business is and where, e.g. 'a residential and commercial cleaning company in Dallas, Texas'",
@@ -395,7 +401,16 @@ _VALID_DESIGNS = {"soft-rounded", "friendly-round", "elegant-serif",
                   "bold-impact", "modern-grotesk", "tech-condensed"}
 
 
-def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, list, str, str]:
+def _too_pale(hex_color: str) -> bool:
+    """True if a color is too grey/pale to work as a brand accent."""
+    rgb = _to_rgb(hex_color)
+    if not rgb:
+        return True
+    _h, s, v = _saturation_value(rgb)
+    return s < 0.25 or v > 0.9
+
+
+def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, list, str, str, list]:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set.")
@@ -425,6 +440,14 @@ def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, li
     mood = "dark" if (data.get("mood") or "").strip().lower() == "dark" else "bright"
     if design == "tech-condensed":
         mood = "dark"
+    # Model-suggested brand colors (used only if site detection is too pale).
+    suggested = []
+    for c in (data.get("colors") or [])[:2]:
+        c = (c or "").strip()
+        if not c.startswith("#"):
+            c = "#" + c
+        if _to_rgb(c):
+            suggested.append(_rgb_to_hex(_to_rgb(c)))
     brand.setdefault("website", base)
     # Guarantee the no-em-dash rule is present.
     rules = brand.get("voice_rules") or []
@@ -437,7 +460,7 @@ def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, li
         if t.get("link") not in valid_urls:
             t["link"] = base
         t.setdefault("vertical", None)
-    return brand, themes, design, mood
+    return brand, themes, design, mood, suggested
 
 
 # ---------------------------------------------------------------------------
@@ -531,16 +554,21 @@ def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str =
     scrape = scrape_site(base, progress)
 
     progress("Studying the brand and writing content themes...")
-    brand, themes, design, mood = build_brand_and_themes(name, base, scrape)
+    brand, themes, design, mood, suggested = build_brand_and_themes(name, base, scrape)
 
     progress("Fetching the logo...")
     logo_bytes = _download_logo(scrape, base)
 
     # Derive the brand colors from the site + logo unless the user chose to
-    # set them by hand. The passed accents are the fallback either way.
+    # set them by hand. If the site yields only pale/grey colors, fall back to
+    # the model's suggested on-brand colors so posts are never colorless.
     if auto_colors:
         accent, accent2 = detect_accents(scrape, logo_bytes, accent, accent2)
-        logger.info("Detected brand colors for '%s': %s / %s", name, accent, accent2)
+        if _too_pale(accent) and suggested:
+            accent = suggested[0]
+        if _too_pale(accent2) and len(suggested) > 1:
+            accent2 = suggested[1]
+        logger.info("Brand colors for '%s': %s / %s", name, accent, accent2)
 
     if not logo_bytes:
         logo_bytes = _render_wordmark(name, accent)
@@ -572,7 +600,7 @@ def rebuild_content(slug: str, auto_colors: bool = True, progress=None) -> str:
     progress("Studying the brand and writing content themes...")
     # Keep the account's existing design/mood on rebuild (respect any manual
     # override); only brand voice, themes, colors and logo are refreshed.
-    brand, themes, _design, _mood = build_brand_and_themes(name, base, scrape)
+    brand, themes, _design, _mood, suggested = build_brand_and_themes(name, base, scrape)
 
     progress("Fetching the logo...")
     logo_bytes = _download_logo(scrape, base)
@@ -581,6 +609,10 @@ def rebuild_content(slug: str, auto_colors: bool = True, progress=None) -> str:
     accent2 = acct.get("accent2", "#2b6cc4")
     if auto_colors:
         accent, accent2 = detect_accents(scrape, logo_bytes, accent, accent2)
+        if _too_pale(accent) and suggested:
+            accent = suggested[0]
+        if _too_pale(accent2) and len(suggested) > 1:
+            accent2 = suggested[1]
 
     tenants.save_brand(brand, slug)
     tenants.save_themes(themes, slug)

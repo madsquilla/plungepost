@@ -1032,8 +1032,7 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
     kicker_h, head_lh = 54, 60
     items_h = sum(max(60, len(ls) * 37 + 16) for ls in item_lines)
     block_h = kicker_h + len(hl) * head_lh + 28 + items_h
-    bar_h = 88
-    y = max(60, (_LH - bar_h - block_h) // 2)
+    y = max(70, (_LH - _FOOTER_RESERVE - block_h) // 2)
     _kicker_tab(draw, margin, y, kicker, accent)
     y += kicker_h
     for ln in hl:
@@ -1364,6 +1363,22 @@ def _lighten(c, f=0.45):
     return tuple(min(255, int(c[i] + (255 - c[i]) * f)) for i in range(3))
 
 
+def _ui_accent(c):
+    """Normalize a brand accent so it always reads as a colored UI element
+    (kicker pill, rule, color block) on a light card. Pale/washed colors get
+    saturated and darkened; a near-grey accent becomes a readable dark slate."""
+    import colorsys
+    r, g, b = (x / 255 for x in c)
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    if s < 0.12:                       # essentially grey -> dark slate
+        v = min(v, 0.34)
+    else:
+        s = max(s, 0.52)               # ensure it actually has color
+        v = min(max(v, 0.42), 0.72)    # dark enough for white text, light bg
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
 def _vgrad(w, h, c1, c2):
     g = Image.new("RGB", (w, h))
     d = ImageDraw.Draw(g)
@@ -1522,6 +1537,11 @@ def _body_lines(draw, post_text, font, max_w, n):
     return _wrap(draw, _lead_sentence(post_text), font, max_w)[:n]
 
 
+# Vertical space the seamless footer (logo + web address) needs at the bottom;
+# layouts must keep their content above this so nothing overlaps the logo.
+_FOOTER_RESERVE = 150
+
+
 def _lay_top_bar(post_text, out, kicker, headline, accent, photo_path=None, seed=None):
     """Content pinned to the TOP; airy space below. Distinct from a centered stack."""
     img = Image.new("RGB", (_LW, _LH), PAPER).convert("RGBA")
@@ -1547,22 +1567,25 @@ def _lay_top_bar(post_text, out, kicker, headline, accent, photo_path=None, seed
 
 
 def _lay_corner(post_text, out, kicker, headline, accent, photo_path=None, seed=None):
-    """Big headline anchored at the BOTTOM-left; open space + motif up top."""
+    """Big headline anchored above the footer; open space + motif up top."""
     img = Image.new("RGB", (_LW, _LH), PAPER).convert("RGBA")
     _motif(img, accent)
     draw = ImageDraw.Draw(img)
-    m, bar_h = 90, 76
+    m = 90
     _kicker_tab(draw, m, 120, kicker, accent)
-    fh, hl, lh = _fit_head(draw, headline, _LW - 2 * m, 120, 60, 3)
+    fh, hl, lh = _fit_head(draw, headline, _LW - 2 * m, 104, 56, 3)
     fs = _font("NunitoSans.ttf", 27)
     support = _body_lines(draw, post_text, fs, _LW - 2 * m, 2)
     sup_h = len(support) * 38
-    y = (_LH - bar_h - 44 - sup_h) - len(hl) * lh
+    rule_h = 34
+    block_h = len(hl) * lh + rule_h + sup_h
+    # Anchor the whole block so its bottom clears the footer zone (~150px).
+    y = max(220, (_LH - _FOOTER_RESERVE) - block_h)
     for ln in hl:
         draw.text((m, y), ln, font=fh, fill=INK)
         y += lh
     _rule(draw, m, y + 14, accent)
-    y += 34
+    y += rule_h
     for ln in support:
         draw.text((m, y), ln, font=fs, fill=(84, 98, 112))
         y += 38
@@ -1889,6 +1912,7 @@ _LAYOUT_FN = {
 def _render_designed(post_text, out_path, kicker, headline, accent,
                      format_id, photo_path, avoid, rng):
     """Route a bright account's post to one of ITS design's many layouts."""
+    accent = _ui_accent(accent)     # guarantee a readable, colorful accent
     did = current_design_id()
     # De-dupe the pool while preserving order (primaries first).
     seen, pool = set(), []
