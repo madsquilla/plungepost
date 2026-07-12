@@ -410,6 +410,35 @@ def _recolor_logo(logo: Image.Image, target) -> Image.Image:
     return out
 
 
+def _logo_is_monochrome(logo: Image.Image) -> bool:
+    """True if the logo is effectively one color (greyscale or a single hue), so
+    it is safe to recolor. Multi-color logos (e.g. a two-tone mark) must NOT be
+    recolored -- that would flatten and ruin them."""
+    import colorsys
+    import math
+    small = logo.convert("RGBA").resize((26, 26))
+    px = small.load()
+    sats, hues = [], []
+    for j in range(26):
+        for i in range(26):
+            r, g, b, a = px[i, j]
+            if a > 80:
+                h, s, _v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+                sats.append(s)
+                if s > 0.2:
+                    hues.append(h)
+    if not sats:
+        return True
+    if sum(sats) / len(sats) < 0.15:      # greyscale / black / white
+        return True
+    if len(hues) < 3:
+        return True
+    # Circular concentration of hues: ~1 = single hue, ~0 = spread across colors.
+    xs = sum(math.cos(2 * math.pi * h) for h in hues) / len(hues)
+    ys = sum(math.sin(2 * math.pi * h) for h in hues) / len(hues)
+    return math.hypot(xs, ys) > 0.82
+
+
 def _place_logo_footer(base: Image.Image, x: int, y: int, height: int,
                        on_dark: bool = True) -> int:
     """Place the brand logo so it ALWAYS reads on its background.
@@ -442,7 +471,9 @@ def _place_logo_footer(base: Image.Image, x: int, y: int, height: int,
         base.alpha_composite(chip, (x, y - pad))
         return chip_w
 
-    if contrast < 95:
+    # Only recolor a SINGLE-color logo to contrast. A multi-color logo keeps its
+    # real colors (recoloring it flat would ruin it); it is placed directly.
+    if contrast < 95 and _logo_is_monochrome(logo):
         target = (247, 250, 253) if on_dark else (17, 27, 39)
         logo = _recolor_logo(logo, target)
     base.alpha_composite(logo, (x, y))
@@ -1019,12 +1050,7 @@ def render_checklist(post_text, out_path, kicker, headline, accent, seed=None):
             draw.text((margin + 66, ty), ln, font=fi, fill=(54, 68, 82))
             ty += 37
         y = max(y + 60, ty + 16)
-    draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
-    _place_logo_footer(img, margin, _LH - bar_h + (bar_h - 54) // 2, 54, on_dark=True)
-    fd = _font("NunitoSans.ttf", 24)
-    dw = draw.textlength(_domain(), font=fd)
-    draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 24) // 2), _domain(),
-              font=fd, fill=(180, 194, 208))
+    _footer_bar(img, draw, margin, on_dark=False)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(out_path, "PNG")
     return "checklist"
@@ -1079,14 +1105,15 @@ def render_editorial(post_text, out_path, kicker, headline, accent, photo_path, 
     return "editorial"
 
 
-def _footer_bar(img, draw, margin, bar_h=88):
-    """Navy footer strip (used by light / color templates so the logo reads)."""
-    draw.rectangle([0, _LH - bar_h, _LW, _LH], fill=NAVY_DEEP)
-    _place_logo_footer(img, margin, _LH - bar_h + (bar_h - 54) // 2, 54, on_dark=True)
+def _footer_bar(img, draw, margin, on_dark=False):
+    """Seamless footer: the logo + web address sit directly on the card (no
+    heavy bar). `on_dark` picks readable colors for a dark/color background."""
+    y = _LH - 96
+    _place_logo_footer(img, margin, y, 54, on_dark=on_dark)
     fd = _font("NunitoSans.ttf", 23)
     dw = draw.textlength(_domain(), font=fd)
-    draw.text((_LW - margin - dw, _LH - bar_h + (bar_h - 23) // 2),
-              _domain(), font=fd, fill=(180, 194, 208))
+    dom_col = (232, 240, 248) if on_dark else (150, 164, 178)
+    draw.text((_LW - margin - dw, y + 16), _domain(), font=fd, fill=dom_col)
 
 
 def _rule(draw, cx_or_x, y, accent, centered=False):
@@ -1199,7 +1226,7 @@ def render_bold_color(post_text, out_path, kicker, headline, accent, seed=None):
     for ln in support:
         draw.text((margin, y), ln, font=fs, fill=(238, 244, 250))
         y += sup_lh
-    _footer_bar(img, draw, margin)
+    _footer_bar(img, draw, margin, on_dark=True)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(out_path, "PNG")
     return "bold-color"
@@ -1640,12 +1667,14 @@ def _lay_frame(post_text, out, kicker, headline, accent, photo_path=None, seed=N
 # Each design keeps a recognizable identity (its own font/color/motif) but draws
 # from several layouts so a single brand's feed stays varied. Pools differ per
 # design so two brands are still composed differently.
+# Each brand mixes a few text layouts + a color block + a photo layout so its
+# feed has real visual variety while staying in its own font/color/motif.
 _DESIGN_LAYOUTS = {
-    "soft-rounded": ["top-bar", "center-hero", "corner", "editorial", "checklist"],
-    "friendly-round": ["center-hero", "frame", "top-bar", "editorial", "checklist"],
-    "elegant-serif": ["frame", "center-hero", "corner", "editorial", "side-band"],
+    "soft-rounded": ["top-bar", "center-hero", "bold-color", "editorial", "checklist"],
+    "friendly-round": ["center-hero", "frame", "bold-color", "editorial", "checklist"],
+    "elegant-serif": ["frame", "center-hero", "corner", "bold-color", "editorial"],
     "bold-impact": ["side-band", "corner", "bold-color", "top-bar", "editorial"],
-    "modern-grotesk": ["corner", "side-band", "top-bar", "center-hero", "editorial"],
+    "modern-grotesk": ["corner", "side-band", "bold-color", "center-hero", "editorial"],
 }
 
 
