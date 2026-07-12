@@ -199,8 +199,9 @@ def delete_tenant(slug: str) -> bool:
 
 def create_tenant(slug, name, website, brand_dict, themes_list, *,
                   fb_page_id="", fb_token="", accent=_DEFAULT_ACCENT,
-                  accent2=_DEFAULT_ACCENT2, style="dark", logo_bytes=None,
-                  mark_bytes=None, seed_data_from: Path | None = None) -> str:
+                  accent2=_DEFAULT_ACCENT2, style="dark", design="",
+                  logo_bytes=None, mark_bytes=None,
+                  seed_data_from: Path | None = None) -> str:
     """Create a new account. Returns its slug."""
     slug = slugify(slug or name)
     tdir = TENANTS_DIR / slug
@@ -209,13 +210,17 @@ def create_tenant(slug, name, website, brand_dict, themes_list, *,
     # keep its saved Facebook credentials when the caller passes blanks, so a
     # rebuild never wipes a token the user already connected.
     prev = _read_json(tdir / "account.json", {})
-    save_account({
+    acct = {
         "name": name, "website": website,
         "fb_page_id": fb_page_id or prev.get("fb_page_id", ""),
         "fb_token": fb_token or prev.get("fb_token", ""),
         "accent": accent, "accent2": accent2,
         "style": style,
-    }, slug)
+    }
+    # An explicit design locks the visual identity; empty -> auto-by-slug.
+    if design:
+        acct["design"] = design
+    save_account(acct, slug)
     save_brand(brand_dict or {}, slug)
     save_themes(themes_list or [], slug)
     if logo_bytes:

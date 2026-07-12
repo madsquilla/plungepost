@@ -303,7 +303,23 @@ _SYSTEM = (
     "'platform', 'leverage', 'built a tool', 'onboarding', 'deploy', and other "
     "corporate/SaaS jargon unless the business genuinely is a tech company. "
     "Write the voice_rules and themes so a reader would immediately feel this is "
-    "THAT kind of business."
+    "THAT kind of business.\n\n"
+    "You also pick the visual DESIGN SYSTEM that best fits this brand's "
+    "personality, so its posts look right automatically. Choose exactly one "
+    "'design' id and a 'mood':\n"
+    "- soft-rounded  : warm, friendly, approachable (home cleaning, childcare, "
+    "pet care, wellness, cafes). mood=bright\n"
+    "- friendly-round: playful, cheerful, family-facing (kids, parties, ice "
+    "cream, community). mood=bright\n"
+    "- elegant-serif : refined, upscale, boutique (interior design, salon, spa, "
+    "jewelry, fine dining, law, real estate). mood=bright\n"
+    "- bold-impact   : energetic, strong, high-impact (gym, auto, construction, "
+    "sports, BBQ, events). mood=bright\n"
+    "- modern-grotesk: clean, modern, minimal (agencies, studios, modern "
+    "services, startups, e-commerce). mood=bright\n"
+    "- tech-condensed: serious, technical, enterprise (IT, cybersecurity, "
+    "finance, B2B software, industrial). mood=dark\n"
+    "Pick the single best fit for THIS business."
 )
 
 
@@ -323,6 +339,8 @@ Scraped page text:
 
 Return ONLY a single JSON object, no prose, no code fences, with this shape:
 {{
+  "design": "one of: soft-rounded | friendly-round | elegant-serif | bold-impact | modern-grotesk | tech-condensed",
+  "mood": "bright or dark (dark only for tech-condensed)",
   "brand": {{
     "company": "the legal/display company name",
     "what": "a short phrase: what the business is and where, e.g. 'a residential and commercial cleaning company in Dallas, Texas'",
@@ -373,7 +391,11 @@ def _uses_adaptive_thinking(model: str) -> bool:
     return any(t in model for t in ("opus-4-8", "opus-4-7", "fable-5", "mythos-5"))
 
 
-def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, list]:
+_VALID_DESIGNS = {"soft-rounded", "friendly-round", "elegant-serif",
+                  "bold-impact", "modern-grotesk", "tech-condensed"}
+
+
+def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, list, str, str]:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set.")
@@ -397,6 +419,12 @@ def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, li
     data = _parse_json(text)
     brand = data.get("brand") or {}
     themes = data.get("themes") or []
+    design = (data.get("design") or "").strip()
+    if design not in _VALID_DESIGNS:
+        design = ""      # fall back to auto-by-slug if the model picked garbage
+    mood = "dark" if (data.get("mood") or "").strip().lower() == "dark" else "bright"
+    if design == "tech-condensed":
+        mood = "dark"
     brand.setdefault("website", base)
     # Guarantee the no-em-dash rule is present.
     rules = brand.get("voice_rules") or []
@@ -409,7 +437,7 @@ def build_brand_and_themes(name: str, base: str, scrape: dict) -> tuple[dict, li
         if t.get("link") not in valid_urls:
             t["link"] = base
         t.setdefault("vertical", None)
-    return brand, themes
+    return brand, themes, design, mood
 
 
 # ---------------------------------------------------------------------------
@@ -503,7 +531,7 @@ def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str =
     scrape = scrape_site(base, progress)
 
     progress("Studying the brand and writing content themes...")
-    brand, themes = build_brand_and_themes(name, base, scrape)
+    brand, themes, design, mood = build_brand_and_themes(name, base, scrape)
 
     progress("Fetching the logo...")
     logo_bytes = _download_logo(scrape, base)
@@ -521,11 +549,11 @@ def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str =
     slug = tenants.create_tenant(
         name, name, base, brand, themes,
         fb_page_id=fb_page_id, fb_token=fb_token,
-        accent=accent, accent2=accent2, style="bright",
+        accent=accent, accent2=accent2, style=mood, design=design,
         logo_bytes=logo_bytes,
     )
-    logger.info("Onboarded new account '%s' (%s) with %d themes",
-                name, slug, len(themes))
+    logger.info("Onboarded '%s' (%s): %d themes, design=%s, mood=%s",
+                name, slug, len(themes), design or "auto", mood)
     return slug
 
 
@@ -542,7 +570,9 @@ def rebuild_content(slug: str, auto_colors: bool = True, progress=None) -> str:
 
     scrape = scrape_site(base, progress)
     progress("Studying the brand and writing content themes...")
-    brand, themes = build_brand_and_themes(name, base, scrape)
+    # Keep the account's existing design/mood on rebuild (respect any manual
+    # override); only brand voice, themes, colors and logo are refreshed.
+    brand, themes, _design, _mood = build_brand_and_themes(name, base, scrape)
 
     progress("Fetching the logo...")
     logo_bytes = _download_logo(scrape, base)
