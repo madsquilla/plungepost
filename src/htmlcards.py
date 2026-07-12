@@ -159,7 +159,17 @@ def _photo_uri(photo_path):
 
 # --- text helpers ------------------------------------------------------------
 _LIST_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)")
-_NUM_RE = re.compile(r"(\d[\d,]*\.?\d*\s?%|\$\d[\d,]*|\d+x|\d+\+|\d+(?:st|nd|rd|th)?)")
+# A REAL statistic: a percentage, money, multiplier, 24/7, a multi-digit number
+# (>=2 digits, optional +), or an ordinal. A bare single digit (a list marker
+# like "1.") is intentionally NOT a stat.
+_NUM_RE = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?\s?%"        # 60%, 12.5%
+    r"|\$\s?\d[\d,]*(?:\.\d+)?"       # $1,000
+    r"|\b\d+x\b"                      # 3x
+    r"|\b\d{1,3}(?:/\d{1,3})\b"       # 24/7
+    r"|\b\d{2,}[\d,]*\+?\b"           # 500, 500+, 13
+    r"|\b\d+(?:st|nd|rd|th)\b)"       # 1st, 25th
+)
 _SENT_RE = re.compile(r"(.{18,150}?[.!?])(?:\s|$)")
 
 
@@ -167,19 +177,49 @@ def _esc(s):
     return _html.escape((s or "").strip())
 
 
+# An inline numbered-list marker, e.g. the " 1. " in "...we make: 1. Rushed...".
+# Not preceded by a digit (so "3.5" is not a marker).
+_INLINE_MARK = re.compile(r"(?<!\d)\s*\b\d{1,2}[.)]\s+")
+
+
 def _lead(text):
-    t = " ".join((text or "").split())
+    # Drop line-based numbered-list lines first.
+    lines = [ln for ln in (text or "").splitlines() if not _LIST_RE.match(ln.strip())]
+    t = " ".join(" ".join(lines).split())
+    if not t:
+        t = " ".join((text or "").split())
+    # If an INLINE numbered list follows (2+ markers), keep only the intro.
+    marks = list(_INLINE_MARK.finditer(t))
+    if len(marks) >= 2:
+        intro = t[:marks[0].start()].rstrip(" :-–—,")
+        if len(intro) >= 12:
+            t = intro
     m = _SENT_RE.match(t)
     return (m.group(1) if m else t[:150]).strip()
 
 
 def _list_items(text):
+    # Line-based numbered list.
     out = []
     for ln in (text or "").splitlines():
         m = _LIST_RE.match(ln.strip())
         if m:
             out.append(m.group(2).strip())
-    return out
+    if out:
+        return out
+    # Inline numbered list ("intro: 1. a. 2. b. 3. c").
+    t = " ".join((text or "").split())
+    marks = list(_INLINE_MARK.finditer(t))
+    if len(marks) >= 2:
+        items = []
+        for i, mk in enumerate(marks):
+            start = mk.end()
+            end = marks[i + 1].start() if i + 1 < len(marks) else len(t)
+            piece = t[start:end].strip()
+            if piece:
+                items.append(piece)
+        return items
+    return []
 
 
 def _first_stat(text, headline):
