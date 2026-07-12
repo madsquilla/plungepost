@@ -473,13 +473,16 @@ def _bold_color(ctx):
 
 
 def _quote(ctx):
-    return f"""<div class="pad center-v">
+    # A large-statement layout with a bold accent bar (no decorative quote glyph
+    # -- the copy is rarely an actual quotation, so the mark looked random).
+    return f"""<div class="pad center-v" style="padding-left:130px;">
       {ctx['motif']}
-      <div class="head" style="font-size:200px;line-height:.6;color:{_lighten(ctx['accent'],0.5)};
-        height:120px;">&ldquo;</div>
-      <div class="head" style="font-size:{min(ctx['hsize'],78)}px;">{ctx['headline']}</div>
+      <div style="position:absolute;left:96px;top:50%;transform:translateY(-50%);
+        width:10px;height:300px;border-radius:6px;background:{ctx['accent']};"></div>
+      {_kicker_html(ctx['d'], ctx['kicker'])}
+      <div class="head" style="font-size:{min(ctx['hsize'],80)}px;">{ctx['headline']}</div>
       <div class="rule"></div>
-      <div class="kicker {_kcls(ctx['d'])}" style="margin-top:6px;">{_esc(ctx['kicker'])}</div>
+      <div class="sub">{ctx['lead']}</div>
       {ctx['footer']}</div>"""
 
 
