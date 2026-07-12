@@ -931,8 +931,8 @@ def _motif(img: Image.Image, accent) -> None:
 
 
 def _footer_navy(img, draw, margin, light=False):
-    fy = _LH - 92
-    _place_logo_footer(img, margin, fy, 60, on_dark=True)
+    fy = _LH - 96
+    _place_logo_footer(img, margin, fy, 64, on_dark=True)
     fd = _font("NunitoSans.ttf", 24)
     dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - margin - dw, fy + 18), _domain(), font=fd, fill=(226, 234, 244))
@@ -1108,8 +1108,8 @@ def render_editorial(post_text, out_path, kicker, headline, accent, photo_path, 
 def _footer_bar(img, draw, margin, on_dark=False):
     """Seamless footer: the logo + web address sit directly on the card (no
     heavy bar). `on_dark` picks readable colors for a dark/color background."""
-    y = _LH - 96
-    _place_logo_footer(img, margin, y, 54, on_dark=on_dark)
+    y = _LH - 98
+    _place_logo_footer(img, margin, y, 62, on_dark=on_dark)
     fd = _font("NunitoSans.ttf", 23)
     dw = draw.textlength(_domain(), font=fd)
     dom_col = (232, 240, 248) if on_dark else (150, 164, 178)
@@ -1653,7 +1653,7 @@ def _lay_frame(post_text, out, kicker, headline, accent, photo_path=None, seed=N
         draw.text((x, y), ln, font=fs, fill=(84, 98, 112))
         y += 36
     lf_y = _LH - m - 58
-    _place_logo_footer(img, inm, lf_y, 54, on_dark=False)
+    _place_logo_footer(img, inm, lf_y, 60, on_dark=False)
     fd = _font("NunitoSans.ttf", 22)
     dw = draw.textlength(_domain(), font=fd)
     draw.text((_LW - inm - dw, lf_y + 8), _domain(), font=fd, fill=(140, 152, 166))

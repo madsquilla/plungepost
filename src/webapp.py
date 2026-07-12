@@ -756,6 +756,11 @@ def account_logo():
 
         from PIL import Image
         img = Image.open(BytesIO(f.read())).convert("RGBA")
+        # Trim transparent padding so the mark fills the footer (the #1 reason a
+        # logo looks tiny is empty space baked around it).
+        bbox = img.getbbox()
+        if bbox:
+            img = img.crop(bbox)
         # Cap size so a huge upload does not bloat every card render.
         if img.width > 900:
             img = img.resize((900, max(1, round(img.height * 900 / img.width))))
