@@ -75,8 +75,14 @@ DAY_OPTIONS = list(zip(DAYS, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]))
 def _migrate_legacy_account() -> None:
     """First-run migration: if there are no accounts yet, fold the existing
     single-account setup (data/, assets/ logo, content.DEFAULT_BRAND, themes,
-    env FB creds) into tenants/skysystems/ so nothing is lost."""
-    if tenants.list_tenants():
+    env FB creds) into tenants/skysystems/ so nothing is lost.
+
+    Runs at most once. The marker file also lets you deliberately run with zero
+    accounts (e.g. after deleting the last one) without this re-creating the
+    legacy SkySystems tenant from the packaged defaults + .env creds.
+    """
+    marker = tenants.TENANTS_DIR / ".migrated"
+    if marker.exists() or tenants.list_tenants():
         return
     logger.info("No accounts found; migrating existing setup into tenants/skysystems/")
     legacy_data = _REPO_ROOT / "data"
@@ -127,6 +133,8 @@ def _migrate_legacy_account() -> None:
             dst_cards.mkdir(parents=True, exist_ok=True)
             for f in src_cards.glob("*.png"):
                 shutil.copy2(f, dst_cards / f.name)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("legacy skysystems migration ran\n", encoding="utf-8")
     logger.info("Migration complete -> tenants/%s", slug)
 
 
