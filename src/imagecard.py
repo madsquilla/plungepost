@@ -182,6 +182,15 @@ def _nunito(size: int, weight: int = 800) -> ImageFont.FreeTypeFont:
 # Dark/tech accounts use 'tech-condensed'; bright accounts are deterministically
 # assigned one of the bright systems by slug (stable per client).
 _DESIGNS = {
+    # Fallback definitions for the warm-home systems. The HTML renderer owns
+    # their real look (htmlcards._DESIGNS); these exist so a Chromium failure
+    # degrades to a sane Pillow card instead of an unknown-design error.
+    "warm-home": dict(mood="bright",
+        head=("Fraunces.ttf", 600), kfont=("NunitoSans.ttf", 650),
+        case="title", kicker="pill", align="left", rule="bar", motif="none"),
+    "warm-home-round": dict(mood="bright",
+        head=("Baloo2.ttf", 700), kfont=("NunitoSans.ttf", 650),
+        case="title", kicker="pill", align="left", rule="bar", motif="arc"),
     "tech-condensed": dict(mood="dark",
         head=("Rajdhani-Bold.ttf", None), kfont=("Rajdhani-SemiBold.ttf", None),
         case="upper", kicker="tab", align="left", rule="bar", motif="none"),
@@ -201,11 +210,17 @@ _DESIGNS = {
         head=("SpaceGrotesk.ttf", 700), kfont=("SpaceGrotesk.ttf", 500),
         case="title", kicker="underline", align="left", rule="none", motif="corner"),
 }
-_BRIGHT_DESIGNS = ["soft-rounded", "friendly-round", "elegant-serif",
-                   "bold-impact", "modern-grotesk"]
+# Kept in step with htmlcards._BRIGHT so auto-assignment agrees between the
+# two renderers.
+_BRIGHT_DESIGNS = ["warm-home", "soft-rounded", "friendly-round",
+                   "elegant-serif", "bold-impact", "modern-grotesk"]
 
-# Exposed for the settings UI (id -> human label).
+# Exposed for the settings UI (id -> human label). Every id the settings form
+# offers must exist here AND in htmlcards._DESIGNS -- webapp validates against
+# this dict, so a design missing from it cannot be selected or saved.
 DESIGN_LABELS = {
+    "warm-home-round": "Warm home, rounded (Baloo) - no logo",
+    "warm-home": "Warm home, serif (Fraunces) - no logo",
     "soft-rounded": "Soft & rounded (Quicksand)",
     "friendly-round": "Friendly & centered (Baloo)",
     "elegant-serif": "Elegant serif (Fraunces)",
