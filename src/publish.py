@@ -1,4 +1,4 @@
-"""Publish a post to the current account's Facebook Page via the Graph API.
+﻿"""Publish a post to the current account's Facebook Page via the Graph API.
 
 Public API:
     publish_post(item) -> facebook_post_id
@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,36 @@ def _credentials() -> tuple[str, str]:
     return page_id, token
 
 
+_URL_RE = re.compile(r"https?://\S+")
+_TAG_RE = re.compile(r"#\w+")
+
+
+def compose_message(item: dict[str, Any]) -> str:
+    """The Facebook post body: the full message, then the link, then hashtags.
+
+    post_text is written to be the substance of the post, but the card only
+    shows its headline and opening line, and the caption is only a teaser --
+    so publishing the caption alone left the actual message unpublished
+    anywhere. Lead with the full text so the post reads like a business
+    update, and keep the link and hashtags the caption carried.
+    """
+    body = (item.get("post_text") or "").strip()
+    caption = (item.get("caption") or "").strip()
+    if not body:
+        return caption
+
+    url_match = _URL_RE.search(caption)
+    link = url_match.group(0).rstrip(".,);") if url_match else (item.get("link") or "").strip()
+    tags = " ".join(dict.fromkeys(_TAG_RE.findall(caption)))
+
+    parts = [body]
+    if link and link not in body:
+        parts.append(link)
+    if tags:
+        parts.append(tags)
+    return "\n\n".join(parts)
+
+
 def _resolve_card(item: dict[str, Any]) -> Path | None:
     """Return the local card image path if it exists, else None."""
     rel = (item.get("card_path") or "").strip()
@@ -80,9 +111,7 @@ def publish_post(item: dict[str, Any]) -> str:
 def _publish_text(item: dict[str, Any]) -> str:
     page_id, token = _credentials()
 
-    # Caption (lead + clickable link + hashtags) is the Facebook message;
-    # the post_text body lives on the image itself.
-    message = (item.get("caption") or item.get("post_text") or "").strip()
+    message = compose_message(item)
     if not message:
         raise PublishError("Refusing to publish an empty post.")
 
@@ -135,7 +164,7 @@ def _publish_status_with_photo(item: dict[str, Any], card: Path) -> str:
     """
     page_id, token = _credentials()
 
-    message = (item.get("caption") or item.get("post_text") or "").strip()
+    message = compose_message(item)
     if not message:
         raise PublishError("Refusing to publish an empty post.")
 
@@ -179,9 +208,7 @@ def _publish_photo(item: dict[str, Any], card: Path) -> str:
     """
     page_id, token = _credentials()
 
-    # Caption (lead + clickable link + hashtags) is the Facebook message;
-    # the post_text body lives on the image itself.
-    message = (item.get("caption") or item.get("post_text") or "").strip()
+    message = compose_message(item)
     if not message:
         raise PublishError("Refusing to publish an empty post.")
 
