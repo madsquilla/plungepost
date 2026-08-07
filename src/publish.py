@@ -9,6 +9,7 @@ must be a long-lived Page access token (generated separately; see README).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -62,12 +63,17 @@ def _resolve_card(item: dict[str, Any]) -> Path | None:
 
 
 def publish_post(item: dict[str, Any]) -> str:
-    """Publish the post. Posts a photo (branded card) when item['card_path']
-    exists, otherwise a plain text post. Returns the resulting feed post id.
+    """Publish the post. Returns the resulting feed post id.
+
+    With a card, this publishes a normal status update carrying the image
+    rather than a photo upload: the card goes up unpublished, then a feed post
+    attaches it. Posting straight to /photos files the post in the Page's
+    Photos album and Facebook renders it as "added a new photo" instead of as
+    an ordinary post.
     """
     card = _resolve_card(item)
     if card is not None:
-        return _publish_photo(item, card)
+        return _publish_status_with_photo(item, card)
     return _publish_text(item)
 
 
@@ -100,8 +106,77 @@ def _publish_text(item: dict[str, Any]) -> str:
     return post_id
 
 
+def _upload_unpublished_photo(card: Path, page_id: str, token: str) -> str:
+    """Upload a photo without publishing it. Returns its media fbid."""
+    url = f"{GRAPH_BASE}/{page_id}/photos"
+    try:
+        with open(card, "rb") as fh:
+            resp = requests.post(
+                url,
+                data={"published": "false", "access_token": token},
+                files={"source": fh},
+                timeout=REQUEST_TIMEOUT,
+            )
+    except requests.RequestException as exc:
+        raise PublishError(f"Network error uploading photo to Graph API: {exc}") from exc
+
+    data = _handle_response(resp)
+    photo_id = data.get("id")
+    if not photo_id:
+        raise PublishError(f"Graph API 200 but no photo id in response: {data}")
+    return str(photo_id)
+
+
+def _publish_status_with_photo(item: dict[str, Any], card: Path) -> str:
+    """Publish a normal feed post with the card attached.
+
+    Two steps, because /photos alone produces a photo-album post: upload the
+    card unpublished, then create the feed post referencing its media_fbid.
+    """
+    page_id, token = _credentials()
+
+    message = (item.get("caption") or item.get("post_text") or "").strip()
+    if not message:
+        raise PublishError("Refusing to publish an empty post.")
+
+    logger.info(
+        "Publishing STATUS post id=%s (card=%s) to Page %s",
+        item.get("id"), card.name, page_id,
+    )
+    photo_id = _upload_unpublished_photo(card, page_id, token)
+    logger.info("Uploaded unpublished photo id=%s", photo_id)
+
+    url = f"{GRAPH_BASE}/{page_id}/feed"
+    payload = {
+        "message": message,
+        "access_token": token,
+        "attached_media[0]": json.dumps({"media_fbid": photo_id}),
+    }
+    # No `link` here: Facebook ignores a link preview when media is attached,
+    # and the URL in the message text stays clickable anyway.
+    try:
+        resp = requests.post(url, data=payload, timeout=REQUEST_TIMEOUT)
+    except requests.RequestException as exc:
+        raise PublishError(
+            f"Photo {photo_id} was uploaded but the feed post failed: {exc}. "
+            "The photo is unpublished and can be removed from the Page's "
+            "media library."
+        ) from exc
+
+    data = _handle_response(resp)
+    post_id = data.get("id")
+    if not post_id:
+        raise PublishError(f"Graph API 200 but no post id in response: {data}")
+    logger.info("Published status successfully. Facebook post id=%s", post_id)
+    return post_id
+
+
 def _publish_photo(item: dict[str, Any], card: Path) -> str:
-    """Upload the branded card to /photos with the post text as the caption."""
+    """Upload the branded card to /photos with the post text as the caption.
+
+    Legacy path: produces an "added a new photo" album post. Kept for
+    reference; publish_post uses _publish_status_with_photo.
+    """
     page_id, token = _credentials()
 
     # Caption (lead + clickable link + hashtags) is the Facebook message;
