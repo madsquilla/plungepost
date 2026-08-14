@@ -96,15 +96,18 @@ def _resolve_card(item: dict[str, Any]) -> Path | None:
 def publish_post(item: dict[str, Any]) -> str:
     """Publish the post. Returns the resulting feed post id.
 
-    With a card, this publishes a normal status update carrying the image
-    rather than a photo upload: the card goes up unpublished, then a feed post
-    attaches it. Posting straight to /photos files the post in the Page's
-    Photos album and Facebook renders it as "added a new photo" instead of as
-    an ordinary post.
+    Posts the card to /photos with the message as its caption. This is the
+    original path, and the one that produced working feed posts for the
+    SkySystems Page.
+
+    A two-step /feed + attached_media variant was tried to avoid the
+    "added a new photo" framing; it produced an identical status_type and did
+    not change how the post appeared, so it is not used. See
+    _publish_status_with_photo.
     """
     card = _resolve_card(item)
     if card is not None:
-        return _publish_status_with_photo(item, card)
+        return _publish_photo(item, card)
     return _publish_text(item)
 
 
