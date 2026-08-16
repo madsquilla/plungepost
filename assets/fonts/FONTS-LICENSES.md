@@ -13,5 +13,7 @@ and embedding in this application.
 | Quicksand.ttf      | Quicksand     | geometric rounded identity   |
 | Baloo2.ttf         | Baloo 2       | friendly rounded identity    |
 | SpaceGrotesk.ttf   | Space Grotesk | modern grotesk identity      |
+| BricolageGrotesque.woff2 | Bricolage Grotesque | editorial display, matches veritasitgroup.com |
+| Inter.woff2        | Inter         | body face, matches veritasitgroup.com |
 
 Full OFL text: https://openfontlicense.org

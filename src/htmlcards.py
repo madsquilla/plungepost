@@ -107,6 +107,8 @@ _FONTS = {
     "grotesk": ("SpaceGrotesk.ttf", 600),
     "rajdhani": ("Rajdhani-Bold.ttf", 700),
     "nunito": ("NunitoSans.ttf", 400),
+    "bricolage": ("BricolageGrotesque.woff2", 700),
+    "inter": ("Inter.woff2", 400),
 }
 
 _DESIGNS = {
@@ -142,6 +144,14 @@ _DESIGNS = {
     "tech-condensed": dict(head="rajdhani", hw=700, body="nunito", case="upper",
                            radius=3, kicker="tab", motif="grid", tracking=".04em",
                            mood="dark"),
+    # Editorial trust identity for a solo senior engineer's practice: quiet
+    # authority rather than loud cybersecurity-vendor marketing. Sentence
+    # case (the brand's own headline is "I.T. You Can Actually Trust", not
+    # shouted caps), an underline eyebrow instead of a filled badge, and the
+    # same display/body pairing as the brand's own site.
+    "trust-editorial": dict(head="bricolage", hw=700, body="inter", case="none",
+                            radius=14, kicker="underline", motif="glow",
+                            tracking="-.01em", mood="dark"),
 }
 _BRIGHT = ["warm-home", "soft-rounded", "friendly-round", "elegant-serif",
            "bold-impact", "modern-grotesk"]
@@ -159,6 +169,14 @@ _POOLS = {
     "bold-impact": ["bold-color", "photo-full", "corner", "hero"] + _BASE,
     "modern-grotesk": ["corner", "photo-side", "hero", "frame"] + _BASE,
     "tech-condensed": ["hero", "photo-full", "bold-color", "corner", "stat", "quote"],
+    # No bold-color (a full-bleed accent wash reads as a vendor ad, not a
+    # senior engineer's own note) and no photo-full/-top/-card (this brand
+    # sells direct personal access, not stock-photo server-room imagery).
+    # Weighted toward the layouts that carry a credibility number, a direct
+    # trust statement, or a scannable tip list -- what actually earns
+    # engagement for a B2B/MSP account instead of reading as a sales pitch.
+    "trust-editorial": ["stat", "quote", "checklist", "hero", "corner",
+                        "photo-side", "centered"],
 }
 
 
@@ -319,9 +337,10 @@ def _stat_unit(text, headline, stat):
 def _fontfaces():
     faces = []
     for label, (fname, _w) in _FONTS.items():
+        fmt = "woff2" if fname.endswith(".woff2") else "truetype"
         faces.append(
-            "@font-face{font-family:'%s';src:url('%s') format('truetype');"
-            "font-weight:100 1000;font-display:block;}" % (label, _furl(fname)))
+            "@font-face{font-family:'%s';src:url('%s') format('%s');"
+            "font-weight:100 1000;font-display:block;}" % (label, _furl(fname), fmt))
     return "".join(faces)
 
 
@@ -348,7 +367,13 @@ def _theme(design, accent, accent2, mood):
             f"radial-gradient(55% 48% at 8% 96%, rgba({r2},{g2},{b2},0.24), transparent 62%),"
             f"radial-gradient(40% 40% at 30% 50%, rgba({r},{g},{b},0.10), transparent 70%),"
             "linear-gradient(158deg,#122238 0%,#0a1524 55%,#06101c 100%)")
-        head_grad = f"linear-gradient(180deg,#f6fbff 0%,{acc_lt} 118%)"
+        # A light accent tint, not acc_lt -- acc_lt is mixed toward the dark
+        # paper for subtle background fills, and a 3-line headline reaches
+        # far enough down the gradient that its last line landed on a tone
+        # nearly matching the card background (unreadable). Mixing toward
+        # white instead keeps every line legible regardless of line count.
+        head_grad_end = _mix(accent, "#ffffff", 0.45)
+        head_grad = f"linear-gradient(180deg,#f6fbff 0%,{head_grad_end} 118%)"
     else:
         cardbg = paper
         head_grad = ""
@@ -552,6 +577,10 @@ _BG_SETS = {
     "bold-impact": ["stripe", "cornerblock", "glow", "minimal"],
     "modern-grotesk": ["minimal", "dots", "glow", "cornerblock"],
     "tech-condensed": ["grid", "glow", "minimal", "grid"],
+    # No grid: a literal tech-lattice pattern is the cybersecurity-vendor
+    # cliche this brand explicitly avoids. Quiet glow and negative space
+    # read as confidence instead.
+    "trust-editorial": ["glow", "minimal", "ring", "glow"],
 }
 
 
@@ -739,14 +768,18 @@ def _kcls(d):
 
 
 def _hsize(headline_text):
+    # Short/medium headlines run bigger than before: on a 1080-square canvas a
+    # modest headline plus one short sentence of lead left huge dead margins
+    # above and below the centered block. Bigger type makes the same short
+    # copy read as a confident, deliberate statement instead of unfinished.
     n = len(headline_text)
     if n <= 16:
-        return 104
+        return 112
     if n <= 26:
-        return 92
+        return 100
     if n <= 40:
-        return 78
-    return 66
+        return 84
+    return 68
 
 
 # --- entry point -------------------------------------------------------------
@@ -790,6 +823,16 @@ def render_card(item, out_path, photo_path=None, avoid=None, seed=None, layout=N
         pool.append(t)
     if not pool:
         pool = ["hero"]
+    # A single short sentence of lead copy leaves the text-only layouts mostly
+    # empty on a 1080-square canvas -- kicker, headline and one line of lead
+    # centered in a square leaves huge dead margins above and below. When a
+    # photo is available, prefer the layouts that actually use it: they fill
+    # the frame properly, and photo posts draw more engagement anyway.
+    _SPARSE = {"hero", "centered", "corner", "quote", "frame", "bold-color"}
+    if photo and len(lead) < 90:
+        rich = [t for t in pool if t not in _SPARSE]
+        if rich:
+            pool = rich
     fresh = [t for t in pool if t not in (avoid or set())]
     if layout and layout in _LAYOUTS:
         if layout in _PHOTO_LAYOUTS and not photo:
