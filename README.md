@@ -1,17 +1,18 @@
 # PlungePost
 
 Multi-account social post studio. Generates professional, on-brand posts and
-branded graphics for each connected business's Facebook Page and publishes
-them on a schedule, **with a human review gate**. Add a new account from the
-dashboard: give it a name and website, and PlungePost reads the site and
-auto-builds the brand voice, content themes, and logo.
+branded graphics for each connected business's Facebook Page, **with a human
+review gate**. Add a new account from the dashboard: give it a name and
+website, and PlungePost reads the site and auto-builds the brand voice,
+content themes, and logo.
 
-It is a **run-once-and-exit** program: it starts, does one job (generate, or
-publish one approved post), and exits. It is meant to be triggered once per day
-on Unraid, not run as a 24/7 service.
+It is a **run-once-and-exit** program for generation: it starts, generates
+posts, and exits. It is meant to be triggered periodically on Unraid, not run
+as a 24/7 service. The dashboard (a separate long-running service) is where
+you review, approve, and hand off finished posts.
 
-There is **no fully autonomous posting**. By default it only *stages* posts for
-your review. Publishing happens only from a queue you have already approved.
+There is **no automated publishing to Facebook** -- see "Publishing" below
+for why, and how posting actually works now.
 
 ---
 
@@ -29,11 +30,39 @@ Day to day:
 
 1. The app generates posts into `pending.json` (`--mode stage` or `generate-batch`).
 2. **You** review them and cut/paste the good ones into `approved.json`.
-3. The app publishes the oldest approved post (`--mode publish-approved`),
-   moving it to `history.json`.
+3. **You** post them yourself through Meta Business Suite's Planner: open the
+   dashboard's Ready/Scheduled tab, click Download image and Copy caption for
+   each, paste into Business Suite, then click "Mark as posted" in the
+   dashboard to move it to `history.json`.
+
+The app does not publish to Facebook automatically. Content posted through
+this app's own API access gets its reach throttled by Facebook unless the
+app completes Advanced Access review (Business Verification + App Review) --
+see the "Publishing" section below.
 
 The generator reads recent themes/hooks from history + the queues so it does
 not repeat a theme within 30 days.
+
+---
+
+## Publishing
+
+This app **does not call the Facebook API to publish posts.** It used to, but
+Facebook throttles the reach of any content posted by an app that hasn't
+completed Advanced Access review (Business Verification + App Review for
+`pages_manage_posts`) -- such posts remain technically "published" and
+reachable (e.g. via the Page's Photos tab) but never surface in the Page's
+normal feed for real visitors. Getting reviewed requires becoming a Meta
+"Tech Provider" (irreversible) plus submitting business documents, which is
+disproportionate for a small tool serving a couple of Pages.
+
+Instead: the dashboard's Ready and Scheduled tabs give each post a
+**Download image** button and a **Copy caption** button. Post the image +
+caption yourself through **Meta Business Suite's Planner**
+(business.facebook.com) -- native Meta posts always get full normal reach,
+no review needed. Once posted there, click **Mark as posted** in the
+dashboard to move the item into `history.json` for your own records (this
+does not check Facebook; it is just local bookkeeping).
 
 ---
 
@@ -46,16 +75,16 @@ python src/main.py --mode <stage|publish-approved|generate-batch> [--dry-run] [-
 | Mode               | What it does                                                          |
 | ------------------ | -------------------------------------------------------------------- |
 | `stage` (default)  | Generate one post, append it to `pending.json`. No publishing.       |
-| `publish-approved` | Publish the **oldest** unposted item in `approved.json`, move it to `history.json`. |
+| `publish-approved` | Logs how many approved items are waiting. Does **not** call Facebook -- post them yourself via Meta Business Suite, then click "Mark as posted" in the dashboard. |
 | `generate-batch`   | Generate `--count N` posts at once into `pending.json` (default 5).  |
 
 | Flag        | Effect                                                                       |
 | ----------- | ---------------------------------------------------------------------------- |
-| `--dry-run` | Generate + print to console + write to `data/dry_runs/`, **never call Facebook**. Works with any mode. Use this for first runs. |
+| `--dry-run` | Generate + print to console + write to `data/dry_runs/`, instead of staging. Applies to `stage` / `generate-batch` only. |
 | `--count N` | Number of posts for `generate-batch`.                                        |
 
-Exit code is `0` on success and **non-zero on any failure** (API error, nothing
-to publish, expired token) so a failed scheduled run is visible.
+Exit code is `0` on success and **non-zero on any failure** (generation error)
+so a failed scheduled run is visible.
 
 ---
 
@@ -139,8 +168,10 @@ To approve a post:
 4. Save both files. Keep them valid JSON (arrays of objects, commas between
    items, no trailing comma).
 
-`publish-approved` always takes the **oldest** approved item first
-(by `generated_at`), publishes it, and moves it to `history.json`.
+`publish-approved` just logs how many items are in `approved.json` and prints
+each one -- it does not publish anything (see "Publishing" above). Post them
+yourself via Meta Business Suite, then click "Mark as posted" in the
+dashboard for each one to move it into `history.json`.
 
 > Posts you delete from `pending.json` are simply discarded -- nothing is
 > published unless it is in `approved.json`.
@@ -193,21 +224,21 @@ Then open **http://localhost:8080**. From there you can:
 - **Generate** from the theme rotation (set a count, click Generate)
 - See each post's **branded image + caption + on-image copy** (large preview)
 - **Approve**, **Discard**, or move posts **back to review**
-- **Publish** an approved post to your Page with one click
-- **Schedule** a post for a specific date and time (the built-in scheduler
-  publishes it automatically)
-- **Daily auto-pilot** — toggle "auto-publish one approved post each day" at a
-  time you set (weekdays-only optional). It pulls from your approved queue, so
-  keep a few approved and it posts hands-free.
-- See **recently posted** items with links to Facebook
+- **Download image** / **Copy caption** for an approved post, to paste into
+  Meta Business Suite's Planner yourself, then **Mark as posted** to file it
+- **Schedule** a post for a specific date and time -- this just labels it as
+  a reminder for when you plan to post it; nothing fires automatically
+- **Auto-pilot** — assigns approved posts across your chosen days/times
+  automatically, so you have a ready-made posting calendar to work from, but
+  you still post each one by hand
+- See **recently posted** items, with a Facebook link for older ones that
+  were published via the old API path
 
-The scheduler and auto-pilot run inside the dashboard process, so **keep the
-dashboard container running** for scheduled/auto posts to fire. Scheduling uses
-the `TZ` time zone from your `.env` (default `America/Chicago`).
+Scheduling uses the `TZ` time zone from your `.env` (default
+`America/Chicago`).
 
-> Security: the dashboard can publish to your Page and has **no login**. Keep it
-> on localhost or a trusted LAN. Do **NOT** port-forward it or expose it to the
-> internet (this is why no tunneling is needed -- it only makes outbound calls).
+> Security: the dashboard has **no login**. Keep it on localhost or a
+> trusted LAN. Do **NOT** port-forward it or expose it to the internet.
 
 In Docker, the dashboard is its own long-running service:
 
@@ -297,37 +328,30 @@ start. `tenants/` is gitignored, so `update.sh` never touches it.
 
 ### e) Schedule it with the User Scripts plugin
 
-This container is run-once. Use **User Scripts** to run it on a cron schedule.
-Create a script with custom cron and this body (one run per weekday at 9:00 AM
-Central):
+This container is run-once. Use **User Scripts** to run it on a cron schedule
+for generation only -- `--mode publish-approved` no longer posts to Facebook
+(see "Publishing" above), so a script running it just logs a reminder now.
+You can leave such a script running harmlessly or disable it; either way it
+will not post anything on its own anymore.
 
 ```bash
 #!/bin/bash
 docker run --rm \
   -e ANTHROPIC_API_KEY="your-key" \
-  -e META_PAGE_ID="your-page-id" \
-  -e META_PAGE_ACCESS_TOKEN="your-long-lived-page-token" \
   -v /mnt/user/appdata/plungepost/data:/app/data \
   -v /mnt/user/appdata/plungepost/tenants:/app/tenants \
   -v /mnt/user/appdata/plungepost/logs:/app/logs \
-  plungepost:latest --mode publish-approved
+  plungepost:latest --mode generate-batch --count 7
 ```
 
-Cron line for **weekdays at 9:00 AM Central** (set the server TZ to
-`America/Chicago`, or adjust the hour for UTC):
+Cron line for **once a week**:
 
 ```
-0 9 * * 1-5
+0 8 * * 1
 ```
 
-> The container starts, publishes one approved post, and exits. It does not stay
-> running. If `approved.json` is empty, it logs "Nothing to do" and exits
-> non-zero so you notice the queue ran dry.
-
-A common pattern is **two** scheduled scripts:
-- a weekly one that runs `--mode generate-batch --count 7` (fills `pending.json`),
-- a weekday 9 AM one that runs `--mode publish-approved` (after you have
-  reviewed and approved).
+Actual publishing now happens by hand through the dashboard (Download image /
+Copy caption) into Meta Business Suite's Planner -- see "Publishing" above.
 
 ### f) Read the logs to confirm a post
 
@@ -343,7 +367,10 @@ A common pattern is **two** scheduled scripts:
 
 ## Generating a long-lived Page access token (your separate checklist)
 
-The code just consumes `META_PAGE_ACCESS_TOKEN`; you generate it once:
+Not required for the normal Download image / Copy caption workflow -- this is
+only needed if you use the dashboard's "Verify" button to confirm which Page
+a saved token points to, or if you later pursue Meta's Advanced Access review
+(see "Publishing" above) to restore real API publishing:
 
 1. In **Meta for Developers**, create an app and add the Pages permissions
    (`pages_manage_posts`, `pages_read_engagement`).
@@ -352,9 +379,6 @@ The code just consumes `META_PAGE_ACCESS_TOKEN`; you generate it once:
 3. Exchange it for a **long-lived user token**, then call `/me/accounts` to get
    the **long-lived Page token** for your Facebook Page.
 4. Put that Page token in `META_PAGE_ACCESS_TOKEN`.
-
-If the token expires, `publish-approved` fails clearly with a message telling
-you to regenerate it (Graph error code 190).
 
 ---
 

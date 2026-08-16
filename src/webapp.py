@@ -1,14 +1,19 @@
 """PlungePost -- the web review dashboard.
 
 Browser UI to generate (random or custom/holiday posts), review, approve,
-schedule, and publish posts -- plus a built-in scheduler that auto-publishes
-scheduled posts and an optional daily auto-pilot.
+and schedule posts, plus an optional daily auto-pilot for picking dates.
+
+Publishing to Facebook happens by hand, through Meta Business Suite's
+Planner: this dashboard hands you the finished image and caption (Download
+image / Copy caption) rather than posting via the Graph API. Posts made
+through this app's own API access get their reach throttled by Facebook
+unless the app has completed Advanced Access review -- see README.
 
 Run locally:
     python src/webapp.py            # http://localhost:8080
 
-Security: this dashboard can publish to your Facebook Page and has NO login.
-Keep it on localhost or a trusted LAN. Do not expose it to the internet.
+Security: this dashboard has NO login. Keep it on localhost or a trusted
+LAN. Do not expose it to the internet.
 """
 
 from __future__ import annotations
@@ -60,9 +65,10 @@ if hasattr(time, "tzset"):
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "plungepost-local-dashboard")
+app.jinja_env.globals["compose_message"] = pub.compose_message
 
-# Guards every queue read-modify-write so the web routes and the background
-# scheduler never corrupt the JSON files by writing at the same time.
+# Guards every queue read-modify-write so concurrent web requests never
+# corrupt the JSON files by writing at the same time.
 _LOCK = threading.RLock()
 
 
@@ -269,68 +275,11 @@ def _start_generation(kind, count, topic=None, fmt_id=None):
     return True
 
 
-def _do_publish(item) -> str:
-    """Publish one item and append it to history. Returns the FB post id."""
-    post_id = pub.publish_post(item)
+def _mark_posted(item) -> None:
+    """Move an item to history once you've posted it yourself via Business Suite."""
     item["status"] = "posted"
     item["posted_at"] = datetime.now(timezone.utc).isoformat()
-    item["facebook_post_id"] = post_id
     store.append_history(item)
-    return post_id
-
-
-# --- background scheduler --------------------------------------------------
-
-def _scheduler_tick_one() -> None:
-    """One pass for the CURRENT account: publish any due scheduled posts."""
-    page_id, token = tenants.fb_creds()
-    if not (page_id and token) and not (
-        os.environ.get("META_PAGE_ID") and os.environ.get("META_PAGE_ACCESS_TOKEN")
-    ):
-        return
-    now = datetime.now()  # local time (set TZ env on the container)
-    with _LOCK:
-        approved = store.read_approved()
-        remaining, changed = [], False
-        for it in approved:
-            sched = it.get("scheduled_at")
-            due = False
-            if sched:
-                try:
-                    due = datetime.fromisoformat(sched) <= now
-                except ValueError:
-                    due = False
-            if due:
-                try:
-                    pid = _do_publish(it)
-                    logger.info("Scheduler published %s (fb=%s)", it["id"], pid)
-                    changed = True
-                    continue
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("Scheduled publish failed for %s: %s", it["id"], exc)
-            remaining.append(it)
-        if changed:
-            store.write_approved(remaining)
-
-
-def _scheduler_tick() -> None:
-    """One pass over EVERY account so scheduled posts publish for all tenants."""
-    for t in tenants.list_tenants():
-        tenants.set_current(t["slug"])
-        try:
-            _scheduler_tick_one()
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Scheduler failed for account %s: %s", t["slug"], exc)
-
-
-def _scheduler_loop() -> None:
-    logger.info("Background scheduler started.")
-    while True:
-        try:
-            _scheduler_tick()
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Scheduler tick error: %s", exc)
-        time.sleep(60)
 
 
 # --- routes ----------------------------------------------------------------
@@ -605,21 +554,16 @@ def unschedule(item_id):
     return _back()
 
 
-@app.route("/publish/<item_id>", methods=["POST"])
-def publish_one(item_id):
+@app.route("/mark-posted/<item_id>", methods=["POST"])
+def mark_posted(item_id):
     with _LOCK:
         item, rest = _pop(store.read_approved(), item_id)
         if not item:
             flash("That post is no longer approved.", "err")
             return _back()
-        try:
-            pid = _do_publish(item)
-            store.write_approved(rest)
-            flash(f"Published! Facebook post id {pid}", "ok")
-        except pub.TokenExpiredError as exc:
-            flash(f"Token problem: {exc}", "err")
-        except pub.PublishError as exc:
-            flash(f"Publish failed: {exc}", "err")
+        _mark_posted(item)
+        store.write_approved(rest)
+        flash("Moved to Published.", "ok")
     return _back()
 
 
@@ -918,7 +862,13 @@ def account_rebuild():
 
 
 TEMPLATE = r"""
-{% macro render_post(p, kind, meta_ready, now_local) %}
+{% macro render_handoff(p) %}
+  <a class="btn outline" href="{{ url_for('card', name=p.id + '.png') }}" download>Download image</a>
+  <textarea class="copytext" hidden>{{ compose_message(p) }}</textarea>
+  <button type="button" class="btn outline" onclick="copyCaption(this)">Copy caption</button>
+  <form method="post" action="{{ url_for('mark_posted', item_id=p.id) }}"><button class="btn blue">Mark as posted</button></form>
+{% endmacro %}
+{% macro render_post(p, kind, now_local) %}
 <article class="post">
   {% if p.card_path %}
   <a class="thumb" href="{{ url_for('card', name=p.id + '.png') }}" target="_blank" title="Open full size">
@@ -939,12 +889,12 @@ TEMPLATE = r"""
         <form method="post" action="{{ url_for('approve', item_id=p.id) }}"><button class="btn primary">Approve</button></form>
         <form method="post" action="{{ url_for('discard', item_id=p.id) }}" onsubmit="return confirm('Discard this post?')"><button class="btn danger">Discard</button></form>
       {% elif kind == "approved" %}
-        <form method="post" action="{{ url_for('publish_one', item_id=p.id) }}"><button class="btn blue" {{ 'disabled' if not meta_ready }}>Publish now</button></form>
+        {{ render_handoff(p) }}
         <form method="post" action="{{ url_for('schedule', item_id=p.id) }}" class="sched"><input type="datetime-local" name="when" value="{{ now_local }}"><button class="btn outline">Schedule</button></form>
         <form method="post" action="{{ url_for('unapprove', item_id=p.id) }}"><button class="btn outline">Back to review</button></form>
         <form method="post" action="{{ url_for('discard', item_id=p.id) }}" onsubmit="return confirm('Discard this post?')"><button class="btn danger">Discard</button></form>
       {% elif kind == "scheduled" %}
-        <form method="post" action="{{ url_for('publish_one', item_id=p.id) }}"><button class="btn blue" {{ 'disabled' if not meta_ready }}>Publish now</button></form>
+        {{ render_handoff(p) }}
         <form method="post" action="{{ url_for('unschedule', item_id=p.id) }}"><button class="btn outline">Cancel schedule</button></form>
         <form method="post" action="{{ url_for('discard', item_id=p.id) }}" onsubmit="return confirm('Discard this post?')"><button class="btn danger">Discard</button></form>
       {% elif kind == "history" %}
@@ -1288,7 +1238,7 @@ TEMPLATE = r"""
         </div>
         <div class="panel full">
           <h3>Auto-pilot schedule</h3>
-          <p class="hint">When on, approving posts auto-schedules them across these days and times &mdash; one post per slot, each on its own day. They appear on the Scheduled tab and publish automatically at their time. (Turn off to approve into Ready without scheduling.)</p>
+          <p class="hint">When on, approving posts auto-schedules them across these days and times &mdash; one post per slot, each on its own day. They appear on the Scheduled tab as a reminder of when to post them yourself in Meta Business Suite. (Turn off to approve into Ready without scheduling.)</p>
           <form method="post" action="{{ url_for('settings_save') }}">
             <div class="toggle">
               <input type="checkbox" id="ap" name="auto_pilot_enabled" {{ 'checked' if settings.auto_pilot_enabled }}>
@@ -1317,7 +1267,7 @@ TEMPLATE = r"""
         {% if pending %}<form method="post" action="{{ url_for('approve_all') }}" onsubmit="return confirm('Approve all {{ pending|length }} post(s)?')"><button class="btn primary sm">Approve all</button></form>
         <form method="post" action="{{ url_for('clear_pending') }}" onsubmit="return confirm('Delete ALL posts in review? This cannot be undone.')"><button class="btn danger sm">Delete all</button></form>{% endif %}</div>
       {% if not pending %}<div class="empty">Nothing in review. Go to <a href="{{ url_for('overview') }}" style="color:var(--green);">Overview</a> to create posts.</div>{% endif %}
-      {% for p in pending %}{{ render_post(p, "pending", meta_ready, now_local) }}{% endfor %}
+      {% for p in pending %}{{ render_post(p, "pending", now_local) }}{% endfor %}
       {% endif %}
 
       {% if page == 'approved' %}
@@ -1325,20 +1275,20 @@ TEMPLATE = r"""
         {% if ready %}<form method="post" action="{{ url_for('schedule_all') }}" onsubmit="return confirm('Schedule all {{ ready|length }} ready post(s) across your auto-pilot days/times?')"><button class="btn primary sm">Schedule all</button></form>
         <form method="post" action="{{ url_for('clear_approved') }}" onsubmit="return confirm('Delete ALL ready posts? This cannot be undone.')"><button class="btn danger sm">Delete all</button></form>{% endif %}</div>
       {% if not ready %}<div class="empty">Nothing approved yet. Approve posts from <a href="{{ url_for('review') }}" style="color:var(--green);">In Review</a>.</div>{% endif %}
-      {% for p in ready %}{{ render_post(p, "approved", meta_ready, now_local) }}{% endfor %}
+      {% for p in ready %}{{ render_post(p, "approved", now_local) }}{% endfor %}
       {% endif %}
 
       {% if page == 'scheduled' %}
       <div class="sec"><h2>Scheduled</h2><span class="count">{{ scheduled|length }}</span><span class="ln"></span>
         {% if scheduled %}<form method="post" action="{{ url_for('clear_scheduled') }}" onsubmit="return confirm('Delete ALL scheduled posts? This cannot be undone.')"><button class="btn danger sm">Delete all</button></form>{% endif %}</div>
       {% if not scheduled %}<div class="empty">No scheduled posts. Schedule one from <a href="{{ url_for('approved_page') }}" style="color:var(--green);">Ready to Publish</a>.</div>{% endif %}
-      {% for p in scheduled %}{{ render_post(p, "scheduled", meta_ready, now_local) }}{% endfor %}
+      {% for p in scheduled %}{{ render_post(p, "scheduled", now_local) }}{% endfor %}
       {% endif %}
 
       {% if page == 'published' %}
       <div class="sec"><h2>Published</h2><span class="count">{{ posted_total }}</span><span class="ln"></span></div>
       {% if not history %}<div class="empty">No posts published yet.</div>{% endif %}
-      {% for p in history %}{{ render_post(p, "history", meta_ready, now_local) }}{% endfor %}
+      {% for p in history %}{{ render_post(p, "history", now_local) }}{% endfor %}
       {% endif %}
 
       {% if page == 'account' %}
@@ -1476,6 +1426,14 @@ function switchAcct(slug){
   var f=document.createElement('form');f.method='post';f.action='/switch/'+slug;
   document.body.appendChild(f);f.submit();
 }
+function copyCaption(btn){
+  var ta=btn.previousElementSibling;
+  if(!ta||ta.tagName!=='TEXTAREA'){return;}
+  navigator.clipboard.writeText(ta.value).then(function(){
+    var orig=btn.textContent; btn.textContent='Copied!';
+    setTimeout(function(){btn.textContent=orig;},1200);
+  });
+}
 function startOnboard(){
   var form=document.getElementById('acctForm');
   document.getElementById('onbProg').style.display='block';
@@ -1523,11 +1481,6 @@ document.querySelectorAll('form.rebuildform').forEach(function(f){
 """
 
 
-def _start_scheduler():
-    t = threading.Thread(target=_scheduler_loop, daemon=True)
-    t.start()
-
-
 # Run the one-time migration at import so it happens under any entrypoint
 # (python src/webapp.py, gunicorn, etc.), before the first request is served.
 try:
@@ -1537,6 +1490,5 @@ except Exception:  # noqa: BLE001
 
 
 if __name__ == "__main__":
-    _start_scheduler()
     port = int(os.environ.get("PORT", "8080"))
     app.run(host="0.0.0.0", port=port)

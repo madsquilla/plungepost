@@ -5,11 +5,13 @@ Scripts) once per day.
 
 Modes:
     stage             (default) generate tomorrow's post -> pending.json
-    publish-approved  publish the oldest approved item -> history.json
+    publish-approved  report what's approved and waiting -- does NOT post to
+                       Facebook; post it yourself via Meta Business Suite
+                       using the dashboard's Download image / Copy caption
     generate-batch    generate N posts at once -> pending.json
 
 Flags:
-    --dry-run         generate + print + write to a local file, never call Meta
+    --dry-run         generate + print + write to a local file (stage / generate-batch only)
     --count N         number of posts for generate-batch (default 5)
 
 Exit codes:
@@ -39,7 +41,6 @@ except ImportError:  # python-dotenv is optional at runtime
 
 import cards
 import generate as gen
-import publish as pub
 import store
 
 logger = logging.getLogger("plungepost")
@@ -159,43 +160,29 @@ def mode_generate_batch(count: int, dry_run: bool) -> int:
     return 0
 
 
-def mode_publish_approved(dry_run: bool) -> int:
+def mode_publish_approved() -> int:
+    """Report what's waiting to be posted -- no longer publishes via the API.
+
+    Facebook throttles the reach of content posted through an app that
+    hasn't completed Advanced Access review, so this mode no longer calls
+    the Graph API. Post approved items yourself through Meta Business
+    Suite: open the dashboard's Ready/Scheduled tab, download the image and
+    copy the caption, and publish from there.
+    """
     approved = store.read_approved()
-    # Oldest unposted approved item first.
     queue = [i for i in approved if i.get("status") != "posted"]
     if not queue:
-        logger.error("No approved, unposted items in approved.json. Nothing to do.")
-        return 1
-
-    queue.sort(key=lambda i: i.get("generated_at", ""))
-    item = queue[0]
-    _print_post(item)
-
-    if dry_run:
-        path = _write_dry_run([item])
-        logger.info(
-            "DRY RUN: would publish post id=%s. Wrote it to %s. Meta NOT called.",
-            item["id"],
-            path,
-        )
+        logger.info("No approved, unposted items waiting.")
         return 0
 
-    post_id = pub.publish_post(item)
-
-    # Record success in history, then remove the item from approved.json.
-    item = dict(item)
-    item["status"] = "posted"
-    item["posted_at"] = datetime.now(timezone.utc).isoformat()
-    item["facebook_post_id"] = post_id
-    store.append_history(item)
-
-    remaining = [i for i in approved if i.get("id") != item.get("id")]
-    store.write_approved(remaining)
-
+    queue.sort(key=lambda i: i.get("generated_at", ""))
+    for item in queue:
+        _print_post(item)
     logger.info(
-        "Published post id=%s (facebook id=%s) and moved it to history.json.",
-        item["id"],
-        post_id,
+        "%d approved post(s) waiting. Open the dashboard's Ready/Scheduled "
+        "tab, download the image and copy the caption for each, and post "
+        "them yourself through Meta Business Suite.",
+        len(queue),
     )
     return 0
 
@@ -244,18 +231,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.mode == "generate-batch":
             rc = mode_generate_batch(args.count, args.dry_run)
         elif args.mode == "publish-approved":
-            rc = mode_publish_approved(args.dry_run)
+            rc = mode_publish_approved()
         else:  # pragma: no cover -- argparse restricts choices
             logger.error("Unknown mode: %s", args.mode)
             rc = 2
     except gen.GenerationError as exc:
         logger.error("Generation failed: %s", exc)
-        rc = 1
-    except pub.TokenExpiredError as exc:
-        logger.error("ACTION NEEDED -- token problem: %s", exc)
-        rc = 1
-    except pub.PublishError as exc:
-        logger.error("Publishing failed: %s", exc)
         rc = 1
     except Exception as exc:  # noqa: BLE001 -- top-level guard for clean exit code
         logger.exception("Unexpected error: %s", exc)
