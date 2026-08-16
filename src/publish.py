@@ -96,18 +96,15 @@ def _resolve_card(item: dict[str, Any]) -> Path | None:
 def publish_post(item: dict[str, Any]) -> str:
     """Publish the post. Returns the resulting feed post id.
 
-    Posts the card to /photos with the message as its caption. This is the
-    original path, and the one that produced working feed posts for the
-    SkySystems Page.
-
-    A two-step /feed + attached_media variant was tried to avoid the
-    "added a new photo" framing; it produced an identical status_type and did
-    not change how the post appeared, so it is not used. See
-    _publish_status_with_photo.
+    Posting the card straight to /photos creates a photo-album entry, not a
+    feed post -- it only shows up under the Page's Photos tab, not in the
+    main feed visitors actually see. Upload the card unpublished and attach
+    it to a /feed post instead (_publish_status_with_photo) so it appears as
+    a normal timeline post.
     """
     card = _resolve_card(item)
     if card is not None:
-        return _publish_photo(item, card)
+        return _publish_status_with_photo(item, card)
     return _publish_text(item)
 
 
@@ -200,45 +197,6 @@ def _publish_status_with_photo(item: dict[str, Any], card: Path) -> str:
     if not post_id:
         raise PublishError(f"Graph API 200 but no post id in response: {data}")
     logger.info("Published status successfully. Facebook post id=%s", post_id)
-    return post_id
-
-
-def _publish_photo(item: dict[str, Any], card: Path) -> str:
-    """Upload the branded card to /photos with the post text as the caption.
-
-    Legacy path: produces an "added a new photo" album post. Kept for
-    reference; publish_post uses _publish_status_with_photo.
-    """
-    page_id, token = _credentials()
-
-    message = compose_message(item)
-    if not message:
-        raise PublishError("Refusing to publish an empty post.")
-
-    url = f"{GRAPH_BASE}/{page_id}/photos"
-    logger.info(
-        "Publishing PHOTO post id=%s (card=%s) to Page %s",
-        item.get("id"),
-        card.name,
-        page_id,
-    )
-    try:
-        with open(card, "rb") as fh:
-            resp = requests.post(
-                url,
-                data={"message": message, "access_token": token, "published": "true"},
-                files={"source": fh},
-                timeout=REQUEST_TIMEOUT,
-            )
-    except requests.RequestException as exc:
-        raise PublishError(f"Network error uploading photo to Graph API: {exc}") from exc
-
-    data = _handle_response(resp)
-    # /photos returns {"id": <photo_id>, "post_id": <feed_post_id>}.
-    post_id = data.get("post_id") or data.get("id")
-    if not post_id:
-        raise PublishError(f"Graph API 200 but no post id in response: {data}")
-    logger.info("Published photo successfully. Facebook post id=%s", post_id)
     return post_id
 
 
