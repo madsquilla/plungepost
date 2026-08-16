@@ -753,13 +753,35 @@ def _photo_card(ctx):
       </div>"""
 
 
+def _testimonial(ctx):
+    # A real customer review, not AI copy -- render_card forces this layout
+    # only when item["format"] == "testimonial", never picks it at random.
+    # text-transform:none on the quote regardless of the design's own case
+    # setting: an all-caps customer quote reads as shouting, never natural.
+    stars = "★" * 5
+    return f"""<div class="photo" style="background-image:url('{ctx['photo']}');"></div>
+      <div class="scrim" style="background:linear-gradient(180deg,
+        rgba(8,20,18,.5) 0%, rgba(8,20,18,.86) 100%);"></div>
+      <div class="pad center-v on-photo" style="align-items:center;text-align:center;">
+        <div style="color:{ctx['accent']};font-size:40px;letter-spacing:10px;
+          margin-bottom:32px;">{stars}</div>
+        <div class="head" style="font-size:{min(ctx['hsize'],54)}px;font-style:italic;
+          text-transform:none;max-width:84%;">&ldquo;{ctx['headline']}&rdquo;</div>
+        <div class="rule" style="margin-left:auto;margin-right:auto;
+          background:{ctx['accent']};"></div>
+        <div class="sub" style="max-width:80%;-webkit-line-clamp:2;">{ctx['lead']}</div>
+      </div>
+      {ctx['footer_photo_block']}"""
+
+
 _LAYOUTS = {
     "hero": _hero, "centered": _centered, "corner": _corner, "frame": _frame,
     "bold-color": _bold_color, "quote": _quote, "stat": _stat,
     "checklist": _checklist, "photo-full": _photo_full, "photo-top": _photo_top,
     "photo-side": _photo_side, "photo-card": _photo_card,
+    "testimonial": _testimonial,
 }
-_PHOTO_LAYOUTS = {"photo-full", "photo-top", "photo-side", "photo-card"}
+_PHOTO_LAYOUTS = {"photo-full", "photo-top", "photo-side", "photo-card", "testimonial"}
 
 
 def _kcls(d):
@@ -806,6 +828,12 @@ def render_card(item, out_path, photo_path=None, avoid=None, seed=None, layout=N
     items = _list_items(item.get("post_text", ""))
     stat = _first_stat(item.get("post_text", ""), item.get("image_headline", ""))
     stat_unit = _stat_unit(item.get("post_text", ""), item.get("image_headline", ""), stat)
+
+    # A testimonial is a real customer quote, not AI-generated copy -- always
+    # use the layout built for it rather than leaving it to random rotation.
+    # Falls back to "quote" (no photo needed) if the stock-photo fetch failed.
+    if item.get("format") == "testimonial" and layout is None:
+        layout = "testimonial" if photo else "quote"
 
     rng = random.Random(seed)
     pool = []

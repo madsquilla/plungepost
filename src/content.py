@@ -118,6 +118,21 @@ POST_FORMATS = [
         "Share one single, specific, immediately useful tip. Short, no filler.")},
     {"id": "comparison", "instruction": (
         "Frame as a simple before/after or this-vs-that comparison.")},
+    # Only ever chosen explicitly (see generate.choose_format), never by
+    # random rotation -- there is no real quote to draw on outside a
+    # custom post where the owner pastes one in.
+    {"id": "testimonial", "instruction": (
+        "This post shares a REAL customer review, given to you verbatim in "
+        "the topic above. Do not alter, paraphrase, embellish, or invent "
+        "any part of the quote or the reviewer's name/location -- copy "
+        "them exactly as given, word for word. Set image_headline to the "
+        "quote text only, with no surrounding quotation marks (the design "
+        "adds them). Set image_kicker to something like '5-Star Review'. "
+        "Set post_text to just the reviewer's name and location exactly as "
+        "given (e.g. 'Jane D., Grand Rapids'), nothing else added. The "
+        "caption should introduce the review warmly, quote it in full, "
+        "thank the customer by first name, then add the link and "
+        "hashtags.")},
 ]
 
 POST_LENGTHS = [

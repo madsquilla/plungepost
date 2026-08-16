@@ -71,12 +71,18 @@ def choose_theme(
 
 
 def choose_format(recent: list[dict[str, str]]) -> dict[str, Any]:
-    """Pick a post format not used in the last few posts (avoids same rhythm)."""
+    """Pick a post format not used in the last few posts (avoids same rhythm).
+
+    Never auto-picks "testimonial": there is no real customer quote to draw
+    on outside a custom post where the owner explicitly supplies one and
+    picks that format from the dropdown themselves.
+    """
+    autoformats = [f for f in POST_FORMATS if f["id"] != "testimonial"]
     recent_fmts = [r.get("format", "") for r in recent if r.get("format")]
     # Only the most recent handful matter for "don't repeat the structure".
     avoid = set(recent_fmts[-5:])
-    fresh = [f for f in POST_FORMATS if f["id"] not in avoid]
-    return random.choice(fresh if fresh else POST_FORMATS)
+    fresh = [f for f in autoformats if f["id"] not in avoid]
+    return random.choice(fresh if fresh else autoformats)
 
 
 def _build_user_prompt(
@@ -238,9 +244,10 @@ def get_format(fmt_id: str) -> dict[str, Any] | None:
 def _build_custom_prompt(
     topic: str, recent: list[dict[str, str]], fmt: dict[str, Any], length: dict[str, Any]
 ) -> str:
+    company = content.brand().get("company", "the business")
     lines = [
         "The business owner has a SPECIFIC post they want written. Write it in "
-        "the SkySystems brand voice and follow all the rules. Here is exactly "
+        f"{company}'s brand voice and follow all the rules. Here is exactly "
         "what they want this post to be about:",
         f'"""{topic}"""',
         "",
@@ -248,6 +255,14 @@ def _build_custom_prompt(
         "warmly and professionally, and make any offer or date they mention clear "
         "and accurate. Do not invent details (prices, dates, discounts) they did "
         "not give you.",
+    ]
+    if fmt["id"] == "testimonial":
+        lines.append(
+            "The text above in triple quotes is a REAL customer review. Quote "
+            "it exactly, word for word -- changing even small words turns a "
+            "real review into a fabricated one, which is not acceptable."
+        )
+    lines += [
         f"FORMAT for this post (follow it): {fmt['instruction']}",
         f"LENGTH for this post: {length['instruction']}",
         f"The clickable link {content.brand().get('website', '')} and hashtags "
