@@ -229,6 +229,10 @@ Plus three helper fields for the graphic:
 - image_headline: a short, bold 3 to 7 word title shown large on the graphic.
 - image_kicker: a 2 to 4 word Title Case label above the headline.
 - image_query: a 2 to 4 word concrete, visual, professional stock-photo search.
+  Prefer real, specific business scenes (an office, a person at a laptop, a
+  server rack, a storefront, whatever fits the theme) over generic cliche
+  icon-photos (hooded hackers, glowing padlocks, matrix code, robot hands) --
+  those read as generic stock, not as this business.
 
 FORMATTING THE post_text (rendered on the graphic, so structure helps)
 - Numbered steps: each on its own line starting "1. ", "2. ", "3. ".

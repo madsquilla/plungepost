@@ -149,9 +149,14 @@ _DESIGNS = {
     # case (the brand's own headline is "I.T. You Can Actually Trust", not
     # shouted caps), an underline eyebrow instead of a filled badge, and the
     # same display/body pairing as the brand's own site.
+    # duotone=True: tint real photos toward the brand accent, the same
+    # treatment veritasitgroup.com uses on its own photo bands ("so it reads
+    # as designed and on-brand ... rather than stock" -- ImageBand.astro) so
+    # generated cards actually look like this brand's site, not generic
+    # stock photography.
     "trust-editorial": dict(head="bricolage", hw=700, body="inter", case="none",
                             radius=14, kicker="underline", motif="glow",
-                            tracking="-.01em", mood="dark"),
+                            tracking="-.01em", mood="dark", duotone=True),
 }
 _BRIGHT = ["warm-home", "soft-rounded", "friendly-round", "elegant-serif",
            "bold-impact", "modern-grotesk"]
@@ -169,14 +174,16 @@ _POOLS = {
     "bold-impact": ["bold-color", "photo-full", "corner", "hero"] + _BASE,
     "modern-grotesk": ["corner", "photo-side", "hero", "frame"] + _BASE,
     "tech-condensed": ["hero", "photo-full", "bold-color", "corner", "stat", "quote"],
-    # No bold-color (a full-bleed accent wash reads as a vendor ad, not a
-    # senior engineer's own note) and no photo-full/-top/-card (this brand
-    # sells direct personal access, not stock-photo server-room imagery).
+    # No bold-color (a full-bleed accent wash reads as a vendor ad) and no
+    # photo-top/-card (heavy text panel over generic stock imagery). "banner"
+    # is the exception -- a real, specific business photo (duotone-treated
+    # to match the brand's own site) with one bold caption, closer to how
+    # competent MSP pages actually post than a graphic-design template card.
     # Weighted toward the layouts that carry a credibility number, a direct
     # trust statement, or a scannable tip list -- what actually earns
     # engagement for a B2B/MSP account instead of reading as a sales pitch.
     "trust-editorial": ["stat", "quote", "checklist", "hero", "corner",
-                        "photo-side", "centered"],
+                        "photo-side", "centered", "banner"],
 }
 
 
@@ -462,6 +469,17 @@ html,body{width:1080px;height:1080px;}
 .scrim{position:absolute;inset:0;background:linear-gradient(to top,
   rgba(8,20,18,.94) 0%, rgba(8,20,18,.72) 30%, rgba(8,20,18,.18) 58%,
   rgba(8,20,18,0) 78%);}
+/* A stock photo tinted toward the brand accent reads as designed, not
+   stock -- the same trick the brand's own site uses on its photo bands.
+   Opt-in per design (duotone:true) since it only suits brands whose real
+   site does this; most brands' photos should stay natural-color. */
+#card.d-duotone .photo{filter:saturate(.55);}
+#card.d-duotone .duotone{position:absolute;inset:0;background:{ACCENT2};
+  mix-blend-mode:multiply;opacity:.5;pointer-events:none;}
+.pill-banner{align-self:flex-start;background:{ACCENT};color:#fff;
+  font-family:'{HEAD}';font-weight:{HW};font-size:44px;line-height:1.28;
+  padding:30px 42px;border-radius:38px;max-width:86%;text-transform:none;
+  box-shadow:0 22px 54px rgba(0,0,0,.4);}
 .on-photo{color:#fff;}
 .on-photo .head{color:#fff;text-shadow:0 2px 18px rgba(0,0,0,.35);}
 .on-photo .sub{color:#e7edf3;max-width:86%;}
@@ -774,14 +792,29 @@ def _testimonial(ctx):
       {ctx['footer_photo_block']}"""
 
 
+def _banner(ctx):
+    # A real, specific business photo carries the post; the headline is a
+    # single bold pill low on the frame, not a text block competing with the
+    # image. Matches the reference posts that prompted this layout: the
+    # photo is the substance, the text is a caption on top of it.
+    return f"""<div class="photo" style="background-image:url('{ctx['photo']}');"></div>
+      <div class="duotone"></div>
+      <div class="scrim" style="background:linear-gradient(180deg,
+        rgba(8,20,18,.1) 0%, rgba(8,20,18,.35) 55%, rgba(8,20,18,.88) 100%);"></div>
+      <div class="pad" style="justify-content:flex-end;padding-bottom:{ctx['pb_photo']};">
+        <div class="pill-banner">{ctx['headline']}</div>
+      </div>
+      {ctx['footer_photo_block']}"""
+
+
 _LAYOUTS = {
     "hero": _hero, "centered": _centered, "corner": _corner, "frame": _frame,
     "bold-color": _bold_color, "quote": _quote, "stat": _stat,
     "checklist": _checklist, "photo-full": _photo_full, "photo-top": _photo_top,
     "photo-side": _photo_side, "photo-card": _photo_card,
-    "testimonial": _testimonial,
+    "testimonial": _testimonial, "banner": _banner,
 }
-_PHOTO_LAYOUTS = {"photo-full", "photo-top", "photo-side", "photo-card", "testimonial"}
+_PHOTO_LAYOUTS = {"photo-full", "photo-top", "photo-side", "photo-card", "testimonial", "banner"}
 
 
 def _kcls(d):
@@ -897,7 +930,9 @@ def render_card(item, out_path, photo_path=None, avoid=None, seed=None, layout=N
 
     inner = _LAYOUTS[layout](ctx)
     grain = '<div class="grain"></div>' if mood == "dark" else ""
-    _cls = ([] if not d.get("sweep") else ["d-sweep"]) + ([] if show_foot else ["nofoot"])
+    _cls = (([] if not d.get("sweep") else ["d-sweep"])
+            + ([] if show_foot else ["nofoot"])
+            + ([] if not d.get("duotone") else ["d-duotone"]))
     card_cls = f" class='{' '.join(_cls)}'" if _cls else ""
     doc = ("<!doctype html><html><head><meta charset='utf-8'><style>"
            + _fontfaces() + theme_css + "</style></head><body><div id='card'"
