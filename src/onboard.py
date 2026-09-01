@@ -60,6 +60,9 @@ class _TextExtractor(HTMLParser):
         self.icons: list[str] = []               # apple-touch-icon / rel=icon
         self.og_images: list[str] = []           # og:image (often a screenshot)
         self.theme_colors: list[str] = []        # explicit brand color signals
+        self.title: str = ""                     # <title> of the page
+        self.site_name: str = ""                 # og:site_name / application-name
+        self._in_title = False
         self._cur_href: str | None = None
         self._cur_anchor: list[str] = []
 
@@ -67,6 +70,8 @@ class _TextExtractor(HTMLParser):
         a = dict(attrs)
         if tag in ("script", "style", "noscript", "svg"):
             self._skip += 1
+        if tag == "title":
+            self._in_title = True
         if tag == "a" and a.get("href"):
             self._cur_href = a["href"]
             self._cur_anchor = []
@@ -90,15 +95,25 @@ class _TextExtractor(HTMLParser):
             # declared brand color -- the strongest single signal.
             if name in ("theme-color", "msapplication-tilecolor") and a.get("content"):
                 self.theme_colors.append(a["content"])
+            # og:site_name is the business's own name for itself -- the single
+            # best signal when all we were given is a URL.
+            if a.get("property") in ("og:site_name", "og:title") and a.get("content"):
+                self.site_name = self.site_name or a["content"]
+            if name == "application-name" and a.get("content"):
+                self.site_name = self.site_name or a["content"]
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "noscript", "svg") and self._skip:
             self._skip -= 1
+        if tag == "title":
+            self._in_title = False
         if tag == "a" and self._cur_href is not None:
             self.links.append((self._cur_href, " ".join(self._cur_anchor).strip()))
             self._cur_href = None
 
     def handle_data(self, data):
+        if self._in_title:
+            self.title = (self.title + " " + data.strip()).strip()
         if self._skip:
             return
         text = data.strip()
@@ -169,7 +184,59 @@ def scrape_site(website: str, progress=_noop) -> dict:
 
     return {"base": base, "pages": pages, "logos": logos,
             "icons": icons, "og_images": og_images,
-            "theme_colors": theme_colors}
+            "theme_colors": theme_colors,
+            "title": ex.title, "site_name": ex.site_name}
+
+
+# ---------------------------------------------------------------------------
+# Business-name guessing (so a bare URL is enough to onboard)
+# ---------------------------------------------------------------------------
+_NAME_NOISE = re.compile(
+    r"^(home|homepage|welcome|official site|official website|index)$", re.I)
+_TAGLINE_CUT = re.compile(r"\s+[|\u2013\u2014\u00b7\u2022]\s+|\s+-\s+")
+
+
+def _clean_name(raw: str) -> str:
+    """Trim a <title> down to just the business name."""
+    raw = re.sub(r"\s+", " ", (raw or "")).strip()
+    if not raw:
+        return ""
+    # Titles are usually "Name | Tagline" or "Tagline - Name"; keep the part
+    # that reads like a name (shortest non-noise segment, favouring the first).
+    parts = [p.strip() for p in _TAGLINE_CUT.split(raw) if p.strip()]
+    # A title that is nothing but "Home"/"Welcome" tells us nothing; let the
+    # caller fall through to the domain instead.
+    parts = [p for p in parts if not _NAME_NOISE.match(p)]
+    if not parts:
+        return ""
+    best = parts[0]
+    if len(best.split()) > 5 and len(parts) > 1:
+        best = min(parts, key=lambda p: len(p.split()))
+    best = re.sub(r"^(welcome to|home\s*[-|]\s*)\s*", "", best, flags=re.I).strip()
+    # A title that is really a sentence is not a name.
+    if len(best) > 60 or len(best.split()) > 7:
+        return ""
+    return best
+
+
+def _name_from_domain(base: str) -> str:
+    host = urlparse(_normalize_url(base)).netloc.lower()
+    host = host.split(":")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    label = host.split(".")[0] if host else ""
+    label = re.sub(r"[-_]+", " ", label).strip()
+    return label.title() or "New Account"
+
+
+def guess_name(scrape: dict, base: str) -> str:
+    """Best-effort business name from a scraped site, falling back to the
+    domain. Lets the app onboard from nothing but a website address."""
+    for candidate in (scrape.get("site_name"), scrape.get("title")):
+        name = _clean_name(candidate or "")
+        if name:
+            return name
+    return _name_from_domain(base)
 
 
 # ---------------------------------------------------------------------------
@@ -546,12 +613,17 @@ def _render_wordmark(name: str, accent: str) -> bytes:
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
-def build_account(name: str, website: str, fb_page_id: str = "", fb_token: str = "",
-                  accent: str = "#2ecc71", accent2: str = "#2b6cc4",
-                  auto_colors: bool = True, progress=None) -> str:
+def build_account(name: str = "", website: str = "", fb_page_id: str = "",
+                  fb_token: str = "", accent: str = "#2ecc71",
+                  accent2: str = "#2b6cc4", auto_colors: bool = True,
+                  progress=None) -> str:
+    """Read a website and create an account from it. `name` is optional: when
+    it is blank the business name is read off the site (og:site_name/<title>,
+    else the domain), so a bare URL is enough to onboard."""
     progress = progress or _noop
     base = _normalize_url(website)
     scrape = scrape_site(base, progress)
+    name = (name or "").strip() or guess_name(scrape, base)
 
     progress("Studying the brand and writing content themes...")
     brand, themes, design, mood, suggested = build_brand_and_themes(name, base, scrape)

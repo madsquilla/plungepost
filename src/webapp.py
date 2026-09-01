@@ -45,6 +45,7 @@ import generate as gen
 import imagecard
 import onboard
 import publish as pub
+import pwa
 import store
 import tenants
 
@@ -67,9 +68,12 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "plungepost-local-dashboard")
 app.jinja_env.globals["compose_message"] = pub.compose_message
 
+# The phone app (/app) rides on the same server and the same account library.
+app.register_blueprint(pwa.bp)
+
 # Guards every queue read-modify-write so concurrent web requests never
-# corrupt the JSON files by writing at the same time.
-_LOCK = threading.RLock()
+# corrupt the JSON files by writing at the same time. Shared with the PWA.
+_LOCK = store.LOCK
 
 
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -1180,6 +1184,7 @@ TEMPLATE = r"""
       <a href="{{ url_for('scheduled_page') }}" class="{{ 'active' if page=='scheduled' }}">Scheduled <span class="n">{{ scheduled|length }}</span></a>
       <a href="{{ url_for('published') }}" class="{{ 'active' if page=='published' }}">Published <span class="n">{{ posted_total }}</span></a>
       <a href="{{ url_for('account_settings') }}" class="{{ 'active' if page=='account' }}">Account Settings</a>
+      <a href="/app" target="_blank" rel="noopener">Phone app &nearr;</a>
     </nav>
     <div class="side-foot">
       {% if meta_ready %}<span class="pill on"><span class="dot"></span>Connected</span>

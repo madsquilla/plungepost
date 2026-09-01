@@ -24,11 +24,17 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import tenants
+
+
+# Guards every queue read-modify-write. Shared by the dashboard and the PWA,
+# which serve concurrent requests against the same JSON files.
+LOCK = threading.RLock()
 
 
 def _p(name: str) -> Path:

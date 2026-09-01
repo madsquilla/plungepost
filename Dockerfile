@@ -19,11 +19,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # --with-deps installs the OS libraries Chromium needs on Debian slim.
 RUN playwright install --with-deps chromium
 
-# Application code, brand assets (fonts + logo), and seed data.
+# Application code, brand assets (fonts + logo), seed data, and the
+# installable phone app (/app).
 COPY src/ ./src/
 COPY data/ ./data/
 COPY template/ ./template/
 COPY assets/ ./assets/
+COPY web/ ./web/
 
 # Runs as root so it can write to a bind-mounted Unraid appdata folder
 # (owned by nobody:users) without permission errors. This is a homelab,

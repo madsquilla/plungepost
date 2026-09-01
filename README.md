@@ -11,6 +11,10 @@ posts, and exits. It is meant to be triggered periodically on Unraid, not run
 as a 24/7 service. The dashboard (a separate long-running service) is where
 you review, approve, and hand off finished posts.
 
+There is also a **phone app** (an installable PWA at `/app`): paste a website
+address and it hands you back a finished post -- graphic and text -- ready to
+share into Facebook. See "Phone app" below.
+
 There is **no automated publishing to Facebook** -- see "Publishing" below
 for why, and how posting actually works now.
 
@@ -250,6 +254,53 @@ docker compose down                 # stop it
 
 ---
 
+## Phone app (PWA) -- paste a URL, get a post
+
+The dashboard also serves a mobile-first, installable app at
+**http://localhost:8080/app**. It is the one-thing-well surface: type a
+website address, and it reads the site, learns the brand, writes the post, and
+renders the branded graphic -- then gives you Share / Copy text / Save image.
+
+Install it on your phone: open `/app` in the phone's browser, then
+**Add to Home Screen** (iOS: the Share menu; Android: the install prompt or
+the browser menu). It then opens full-screen with no browser chrome, keeps its
+app icon, and the shell loads offline -- posts you have already made stay
+readable with no connection. Making a *new* post needs a connection, since it
+calls the site and the model.
+
+What it does:
+
+- **One field.** Just the website address -- the business name is read off the
+  site (`og:site_name`/`<title>`, else the domain), so there is nothing else to
+  fill in.
+- **Learns each brand once.** Accounts are keyed by domain: the first time you
+  paste `acme-plumbing.com` it reads the site and builds the brand voice,
+  content themes, colors, and logo. Paste it again later and it reuses what it
+  learned and goes straight to writing. Sites you have used show up as chips
+  under the field.
+- **Optional angle.** Open "Give it an angle" to steer the post ("our Labor Day
+  furnace special, ends Monday"). Leave it blank and it picks from the theme
+  rotation, avoiding anything posted in the last 30 days.
+- **Share to Facebook.** Uses the phone's native share sheet with the image
+  attached, so you can send it straight into the Facebook app or Business
+  Suite. Where sharing files is not supported, Copy text + Save image do the
+  same job in two taps.
+- **Mark as posted** files the post into `history.json` once you have actually
+  posted it (the same bookkeeping the dashboard does), so it stops showing up
+  and stays out of future posts' dedup window.
+- **Share target.** Once installed, PlungePost appears in the phone's own share
+  sheet: share a link from any browser or app and it opens pre-filled.
+
+The app and the dashboard are the **same server and the same library** -- a
+post made on your phone shows up In Review on the dashboard, and vice versa.
+Nothing is published automatically from either one.
+
+> Security: like the dashboard, `/app` has **no login**. Keep it on localhost
+> or a trusted LAN (Tailscale or a VPN if you want it on your phone away from
+> home). Do **NOT** port-forward it.
+
+---
+
 ## 5. Build the Docker image
 
 ```powershell
@@ -389,6 +440,8 @@ plungepost/
   src/
     main.py        entry point, arg parsing, mode dispatch, logging
     webapp.py      Flask web dashboard (review/approve/publish)
+    pwa.py         phone app routes: shell, manifest, worker, icons, JSON API
+    quick.py       URL -> finished post pipeline (onboard if new, then write)
     generate.py    Anthropic call + prompt assembly + JSON parsing
     images.py      Pexels stock-photo fetch
     imagecard.py   branded card rendering (landscape + square + styles)
@@ -406,6 +459,9 @@ plungepost/
     approved.json  you move items here after review
     history.json   already posted, used for dedup
     cards/         rendered post graphics (one PNG per post)
+  web/
+    app.html       the phone app's shell (all of its UI, one file)
+    sw.js          service worker: offline shell + graphic caching
   template/
     post-card.html standalone branded image template
   tools/

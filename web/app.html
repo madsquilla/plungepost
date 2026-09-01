@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PlungePost</title>
+<meta name="description" content="Paste a website address and get an on-brand Facebook post graphic and caption.">
+<meta name="theme-color" content="#0e2740">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PlungePost">
+<style>
+  :root{
+    --bg:#0b1a2b; --bg2:#0e2740; --panel:#12314f; --panel2:#16395a;
+    --line:rgba(255,255,255,.10); --line2:rgba(255,255,255,.18);
+    --text:#eaf1f8; --mut:#9db0c4;
+    --green:#2faa46; --green-h:#38c254; --amber:#e6b15c; --red:#e2607a;
+    --r:16px;
+    --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    background:
+      radial-gradient(1200px 600px at 50% -10%, #17456f 0%, transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    overscroll-behavior-y:none;
+  }
+  button,input,textarea,select{font:inherit;color:inherit;}
+  a{color:inherit;}
+
+  /* ---- chrome ---- */
+  .app{max-width:560px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;}
+  header{
+    position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;
+    padding:calc(var(--safe-t) + 12px) 16px 12px;
+    background:rgba(11,26,43,.82);backdrop-filter:blur(14px);
+    border-bottom:1px solid var(--line);
+  }
+  header img{width:28px;height:28px;border-radius:8px;}
+  header .name{font-weight:700;letter-spacing:-.01em;flex:1;}
+  .iconbtn{
+    background:rgba(255,255,255,.07);border:1px solid var(--line);border-radius:11px;
+    width:38px;height:38px;display:grid;place-items:center;cursor:pointer;
+  }
+  .iconbtn:active{background:rgba(255,255,255,.14);}
+  .iconbtn svg{width:19px;height:19px;stroke:var(--text);fill:none;stroke-width:1.9;
+    stroke-linecap:round;stroke-linejoin:round;}
+  main{flex:1;padding:20px 16px calc(var(--safe-b) + 40px);}
+
+  .offline{display:none;background:#5a3a12;color:#ffdca6;font-size:13.5px;
+    padding:9px 16px;text-align:center;}
+  body.is-offline .offline{display:block;}
+
+  /* ---- compose ---- */
+  .hero h1{margin:14px 0 6px;font-size:26px;line-height:1.2;letter-spacing:-.02em;}
+  .hero p{margin:0 0 22px;color:var(--mut);font-size:15px;}
+  .field{margin-bottom:14px;}
+  label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--mut);font-weight:600;margin-bottom:7px;}
+  .input,textarea.input{
+    width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line2);
+    border-radius:13px;padding:15px 16px;font-size:16px;transition:.15s;
+  }
+  .input::placeholder{color:#7f93a8;}
+  .input:focus{outline:none;border-color:var(--green);
+    box-shadow:0 0 0 3px rgba(47,170,70,.22);background:rgba(255,255,255,.09);}
+  textarea.input{min-height:120px;resize:vertical;line-height:1.6;font-size:15px;}
+  .hint{color:var(--mut);font-size:13px;margin:6px 2px 0;}
+
+  .btn{
+    width:100%;border:none;border-radius:13px;padding:16px;font-size:16px;font-weight:700;
+    background:var(--green);color:#fff;cursor:pointer;transition:.15s;
+    display:flex;align-items:center;justify-content:center;gap:9px;
+  }
+  .btn:active{transform:translateY(1px);background:var(--green-h);}
+  .btn[disabled]{opacity:.55;pointer-events:none;}
+  a.btn{text-decoration:none;}
+  .btn.ghost{background:rgba(255,255,255,.07);border:1px solid var(--line2);color:var(--text);}
+  .btn.ghost:active{background:rgba(255,255,255,.13);}
+  .btn.danger{background:transparent;border:1px solid rgba(226,96,122,.45);color:#f3a3b3;}
+  .btn svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:2;
+    stroke-linecap:round;stroke-linejoin:round;}
+  .btnrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;}
+
+  .known{margin-top:26px;}
+  .known .lbl{font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--mut);font-weight:600;margin-bottom:10px;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);
+    border:1px solid var(--line);border-radius:99px;padding:8px 14px;font-size:14px;
+    cursor:pointer;}
+  .chip:active{background:rgba(255,255,255,.13);}
+  .chip .dot{width:9px;height:9px;border-radius:50%;flex:none;}
+
+  .adv{margin-top:16px;}
+  .adv summary{list-style:none;cursor:pointer;color:var(--mut);font-size:14px;
+    padding:6px 2px;display:flex;align-items:center;gap:7px;}
+  .adv summary::-webkit-details-marker{display:none;}
+  .adv summary::before{content:"+";font-weight:700;color:var(--green);}
+  .adv[open] summary::before{content:"\2212";}
+
+  /* ---- working ---- */
+  .working{text-align:center;padding:44px 8px;}
+  .ring{width:64px;height:64px;margin:0 auto 24px;border-radius:50%;
+    border:3px solid rgba(255,255,255,.12);border-top-color:var(--green);
+    animation:spin 900ms linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .working h2{margin:0 0 8px;font-size:19px;}
+  .working .msg{color:var(--mut);min-height:48px;font-size:15px;}
+  .steps{margin:26px auto 0;max-width:300px;text-align:left;display:grid;gap:11px;}
+  .step{display:flex;align-items:center;gap:11px;color:var(--mut);font-size:14.5px;}
+  .step .b{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.18);flex:none;}
+  .step.on{color:var(--text);} .step.on .b{background:var(--green);
+    box-shadow:0 0 0 4px rgba(47,170,70,.2);}
+  .step.done .b{background:var(--green);}
+
+  /* ---- result ---- */
+  .cardwrap{border-radius:var(--r);overflow:hidden;border:1px solid var(--line);
+    background:var(--panel);box-shadow:0 12px 34px rgba(0,0,0,.35);}
+  .cardwrap img{display:block;width:100%;}
+  .meta{display:flex;align-items:center;gap:9px;margin:16px 2px 12px;flex-wrap:wrap;}
+  .meta .biz{font-weight:700;}
+  .tag{font-size:12px;padding:3px 10px;border-radius:99px;background:rgba(255,255,255,.08);
+    border:1px solid var(--line);color:var(--mut);}
+  .count{display:block;text-align:right;font-size:12.5px;color:var(--mut);margin:7px 2px 0;}
+  .note{background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:13px;
+    padding:13px 15px;color:var(--mut);font-size:13.5px;margin-top:16px;}
+  .note b{color:var(--text);font-weight:600;}
+  .note a{color:#8ec9ff;}
+
+  /* ---- library ---- */
+  .lib{display:grid;gap:12px;}
+  .row{display:flex;gap:12px;align-items:center;background:rgba(255,255,255,.05);
+    border:1px solid var(--line);border-radius:14px;padding:10px;cursor:pointer;}
+  .row:active{background:rgba(255,255,255,.1);}
+  .row img{width:84px;height:56px;object-fit:cover;border-radius:9px;flex:none;
+    background:var(--panel2);}
+  .row .t{min-width:0;flex:1;}
+  .row .t .h{font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;}
+  .row .t .s{color:var(--mut);font-size:13px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;}
+  .empty{text-align:center;color:var(--mut);padding:52px 20px;}
+  .empty svg{width:44px;height:44px;stroke:var(--mut);fill:none;stroke-width:1.5;
+    opacity:.6;margin-bottom:14px;}
+
+  .err{background:rgba(226,96,122,.14);border:1px solid rgba(226,96,122,.4);
+    color:#f6b6c3;border-radius:13px;padding:14px 16px;font-size:14.5px;margin-bottom:16px;}
+  .toast{position:fixed;left:50%;bottom:calc(var(--safe-b) + 24px);transform:translateX(-50%)
+    translateY(20px);background:#f2f6fa;color:#12314f;font-weight:600;font-size:14px;
+    padding:11px 20px;border-radius:99px;box-shadow:0 10px 30px rgba(0,0,0,.4);
+    opacity:0;pointer-events:none;transition:.22s;z-index:60;}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+<div class="offline">You're offline &mdash; past posts still open, new ones need a connection.</div>
+
+<div class="app">
+  <header>
+    <img src="/icons/icon-192.png" alt="">
+    <span class="name">PlungePost</span>
+    <button class="iconbtn hidden" id="installBtn" title="Add to home screen" aria-label="Add to home screen">
+      <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0l-4-4m4 4l4-4M5 20h14"/></svg>
+    </button>
+    <button class="iconbtn" id="libBtn" title="Post library" aria-label="Post library">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <!-- COMPOSE -->
+    <section id="v-compose">
+      <div class="hero">
+        <h1>Turn a website into a Facebook post.</h1>
+        <p>Paste the address. PlungePost reads the brand and writes the post &mdash; graphic and text.</p>
+      </div>
+      <div id="composeErr"></div>
+      <form id="composeForm" novalidate>
+        <div class="field">
+          <label for="url">Website address</label>
+          <input class="input" id="url" name="url" type="url" inputmode="url"
+                 autocomplete="url" autocapitalize="off" autocorrect="off"
+                 spellcheck="false" placeholder="acme-plumbing.com" required>
+        </div>
+        <details class="adv">
+          <summary>Give it an angle (optional)</summary>
+          <div class="field" style="margin-top:12px">
+            <textarea class="input" id="topic" rows="3"
+              placeholder="e.g. our Labor Day furnace tune-up special, ends Monday"></textarea>
+            <p class="hint">Leave blank and it picks a fresh theme on its own, avoiding
+              anything posted in the last 30 days.</p>
+          </div>
+        </details>
+        <button class="btn" type="submit" id="goBtn" style="margin-top:8px">
+          <svg viewBox="0 0 24 24"><path d="M5 12h14m-6-6l6 6-6 6"/></svg>
+          Make the post
+        </button>
+      </form>
+      <div class="known hidden" id="known">
+        <div class="lbl">Sites you've used</div>
+        <div class="chips" id="knownChips"></div>
+      </div>
+    </section>
+
+    <!-- WORKING -->
+    <section id="v-working" class="hidden">
+      <div class="working">
+        <div class="ring"></div>
+        <h2 id="workTitle">Making your post</h2>
+        <p class="msg" id="workMsg">Starting&hellip;</p>
+        <div class="steps">
+          <div class="step" data-step="read"><span class="b"></span>Read the website</div>
+          <div class="step" data-step="brand"><span class="b"></span>Learn the brand</div>
+          <div class="step" data-step="write"><span class="b"></span>Write the post</div>
+          <div class="step" data-step="design"><span class="b"></span>Design the graphic</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RESULT -->
+    <section id="v-result" class="hidden">
+      <div class="cardwrap"><img id="rImg" alt="The post graphic"></div>
+      <div class="meta">
+        <span class="biz" id="rBiz"></span>
+        <span class="tag" id="rTheme"></span>
+      </div>
+      <div class="field">
+        <label for="rText">Post text &mdash; edit before you post</label>
+        <textarea class="input" id="rText" rows="6"></textarea>
+        <span class="count" id="rCount"></span>
+      </div>
+      <button class="btn" id="shareBtn">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L8 8m4-4l4 4M5 15v3a2 2 0 002 2h10a2 2 0 002-2v-3"/></svg>
+        Share to Facebook
+      </button>
+      <div class="btnrow">
+        <button class="btn ghost" id="copyBtn">
+          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg>
+          Copy text
+        </button>
+        <a class="btn ghost" id="dlBtn" download>
+          <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0l-4-4m4 4l4-4M5 20h14"/></svg>
+          Save image
+        </a>
+      </div>
+      <div class="note">
+        <b>Posting it:</b> open <a href="https://business.facebook.com/latest/posts" target="_blank" rel="noopener">Meta Business Suite</a>
+        (or the Facebook app), attach the saved image, paste the text, and publish to your
+        Page. Then mark it posted here so it doesn't come round again.
+      </div>
+      <div class="btnrow">
+        <button class="btn ghost" id="postedBtn">Mark as posted</button>
+        <button class="btn ghost" id="againBtn">New post</button>
+      </div>
+      <button class="btn danger" id="discardBtn" style="margin-top:10px">Discard this post</button>
+    </section>
+
+    <!-- LIBRARY -->
+    <section id="v-library" class="hidden">
+      <div class="hero"><h1 style="font-size:22px">Waiting for you</h1>
+        <p>Posts you've made but not posted yet.</p></div>
+      <div class="lib" id="libList"></div>
+      <button class="btn ghost" id="libBack" style="margin-top:20px">Back</button>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(id){ return document.getElementById(id); };
+  var VIEWS = ["compose","working","result","library"];
+  var state = { job:null, result:null, timer:null };
+
+  function show(view){
+    VIEWS.forEach(function(v){ $("v-"+v).classList.toggle("hidden", v !== view); });
+    window.scrollTo(0,0);
+  }
+  function toast(msg){
+    var t = $("toast"); t.textContent = msg; t.classList.add("on");
+    clearTimeout(t._t); t._t = setTimeout(function(){ t.classList.remove("on"); }, 2200);
+  }
+  function errorBox(where, msg){
+    $(where).innerHTML = msg ? '<div class="err">' + escapeHtml(msg) + '</div>' : '';
+  }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function api(url, opts){
+    return fetch(url, opts).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(body){
+        if(!r.ok){ throw new Error(body.error || ("Request failed (" + r.status + ")")); }
+        return body;
+      });
+    });
+  }
+
+  /* ---------- compose ---------- */
+  $("composeForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var url = $("url").value.trim();
+    if(!url || url.indexOf(".") < 0){ errorBox("composeErr","Enter a website address, like acme.com."); return; }
+    errorBox("composeErr","");
+    $("goBtn").disabled = true;
+    api("/api/quick", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ url:url, topic: $("topic").value.trim() })
+    }).then(function(res){
+      state.job = res.job;
+      try { localStorage.setItem("pp:lasturl", url); } catch(e){}
+      startWatching();
+    }).catch(function(err){
+      errorBox("composeErr", err.message);
+    }).then(function(){ $("goBtn").disabled = false; });
+  });
+
+  /* ---------- working ---------- */
+  var STEP_ORDER = ["read","brand","write","design"];
+  function stepFor(msg){
+    var m = (msg||"").toLowerCase();
+    if(m.indexOf("design") === 0 || m.indexOf("graphic") >= 0) return "design";
+    if(m.indexOf("writing the post") >= 0) return "write";
+    if(m.indexOf("brand") >= 0 || m.indexOf("theme") >= 0 || m.indexOf("logo") >= 0) return "brand";
+    if(m.indexOf("reading") >= 0 || m.indexOf("website") >= 0) return "read";
+    return null;
+  }
+  function paintSteps(msg){
+    var cur = stepFor(msg), at = STEP_ORDER.indexOf(cur);
+    document.querySelectorAll(".step").forEach(function(el){
+      var i = STEP_ORDER.indexOf(el.getAttribute("data-step"));
+      el.classList.toggle("on", at >= 0 && i === at);
+      el.classList.toggle("done", at >= 0 && i < at);
+    });
+  }
+  function startWatching(){
+    show("working");
+    $("workTitle").textContent = "Making your post";
+    $("workMsg").textContent = "Starting…";
+    paintSteps("");
+    poll();
+  }
+  function poll(){
+    clearTimeout(state.timer);
+    api("/api/quick/" + state.job).then(function(job){
+      $("workMsg").textContent = job.message || "Working…";
+      paintSteps(job.message);
+      if(job.business){ $("workTitle").textContent = "Making a post for " + job.business; }
+      if(job.active){ state.timer = setTimeout(poll, 1100); return; }
+      if(job.error){ show("compose"); errorBox("composeErr", job.message); return; }
+      renderResult(job.result);
+      loadAccounts();
+    }).catch(function(err){
+      show("compose"); errorBox("composeErr", err.message);
+    });
+  }
+
+  /* ---------- result ---------- */
+  function renderResult(r){
+    if(!r){ show("compose"); errorBox("composeErr","The post came back empty. Try again."); return; }
+    state.result = r;
+    $("rImg").src = r.card_url || "";
+    $("rImg").parentNode.classList.toggle("hidden", !r.card_url);
+    $("rBiz").textContent = r.business || "";
+    $("rTheme").textContent = r.kicker || r.theme || "";
+    $("rTheme").classList.toggle("hidden", !(r.kicker || r.theme));
+    $("rText").value = r.message || r.post_text || r.caption || "";
+    $("dlBtn").href = r.card_url || "#";
+    $("dlBtn").setAttribute("download", (r.business || "plungepost").replace(/\W+/g,"-").toLowerCase() + "-post.png");
+    show("result");
+    countText();   // sizes the field, so it must run once it is on screen
+  }
+  function countText(){
+    var ta = $("rText");
+    $("rCount").textContent = ta.value.length + " characters";
+    // Grow to fit, so a long post is never hidden behind a scrollbar.
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight + 2, 640) + "px";
+  }
+  $("rText").addEventListener("input", countText);
+
+  $("copyBtn").addEventListener("click", function(){
+    var text = $("rText").value;
+    var done = function(){ toast("Text copied"); };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done, fallbackCopy);
+    } else { fallbackCopy(); }
+    function fallbackCopy(){
+      var ta = $("rText"); ta.focus(); ta.select();
+      try { document.execCommand("copy"); done(); }
+      catch(e){ toast("Select the text and copy it"); }
+    }
+  });
+
+  $("shareBtn").addEventListener("click", function(){
+    var r = state.result, text = $("rText").value;
+    if(!navigator.share){
+      toast("Sharing isn't available here — copy the text and save the image");
+      return;
+    }
+    var btn = this; btn.disabled = true;
+    imageFile(r).then(function(file){
+      var payload = { text: text };
+      if(file && navigator.canShare && navigator.canShare({ files:[file] })){
+        payload.files = [file];
+      }
+      return navigator.share(payload);
+    }).catch(function(err){
+      if(err && err.name === "AbortError"){ return; }
+      toast("Couldn't open the share sheet");
+    }).then(function(){ btn.disabled = false; });
+  });
+
+  function imageFile(r){
+    if(!r || !r.card_url) return Promise.resolve(null);
+    return fetch(r.card_url).then(function(res){ return res.blob(); })
+      .then(function(blob){ return new File([blob], "post.png", { type:"image/png" }); })
+      .catch(function(){ return null; });
+  }
+
+  $("postedBtn").addEventListener("click", function(){
+    var r = state.result; if(!r) return;
+    api("/api/posted/" + r.slug + "/" + r.id, { method:"POST" }).then(function(){
+      toast("Filed under posted");
+      resetCompose();
+    }).catch(function(err){ toast(err.message); });
+  });
+
+  $("discardBtn").addEventListener("click", function(){
+    var r = state.result; if(!r) return;
+    if(!confirm("Discard this post?")) return;
+    api("/api/discard/" + r.slug + "/" + r.id, { method:"POST" }).then(function(){
+      toast("Discarded");
+      resetCompose();
+    }).catch(function(err){ toast(err.message); });
+  });
+
+  $("againBtn").addEventListener("click", resetCompose);
+
+  function resetCompose(){
+    state.result = null; state.job = null;
+    $("topic").value = "";
+    errorBox("composeErr","");
+    show("compose");
+  }
+
+  /* ---------- library ---------- */
+  $("libBtn").addEventListener("click", function(){
+    show("library");
+    $("libList").innerHTML = '<div class="empty">Loading…</div>';
+    api("/api/library").then(function(res){
+      var posts = res.posts || [];
+      if(!posts.length){
+        $("libList").innerHTML = '<div class="empty">' +
+          '<svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M4 10h16"/></svg>' +
+          '<div>Nothing waiting. Make a post and it shows up here.</div></div>';
+        return;
+      }
+      $("libList").innerHTML = posts.map(function(p, i){
+        return '<div class="row" data-i="' + i + '">' +
+          (p.card_url ? '<img src="' + escapeHtml(p.card_url) + '" alt="">' : '<img alt="">') +
+          '<div class="t"><div class="h">' + escapeHtml(p.headline || p.caption || "Untitled") + '</div>' +
+          '<div class="s">' + escapeHtml(p.business || "") + '</div></div></div>';
+      }).join("");
+      Array.prototype.forEach.call($("libList").children, function(el){
+        el.addEventListener("click", function(){
+          renderResult(posts[parseInt(el.getAttribute("data-i"), 10)]);
+        });
+      });
+    }).catch(function(err){
+      $("libList").innerHTML = '<div class="empty">' + escapeHtml(err.message) + '</div>';
+    });
+  });
+  $("libBack").addEventListener("click", function(){ show("compose"); });
+
+  /* ---------- known sites ---------- */
+  function loadAccounts(){
+    api("/api/accounts").then(function(res){
+      var accts = res.accounts || [];
+      $("known").classList.toggle("hidden", !accts.length);
+      $("knownChips").innerHTML = accts.map(function(a){
+        return '<span class="chip" data-url="' + escapeHtml(a.website) + '">' +
+          '<span class="dot" style="background:' + escapeHtml(a.accent || "#2faa46") + '"></span>' +
+          escapeHtml(a.name) + '</span>';
+      }).join("");
+      Array.prototype.forEach.call($("knownChips").children, function(el){
+        el.addEventListener("click", function(){
+          $("url").value = el.getAttribute("data-url");
+          $("url").focus();
+        });
+      });
+    }).catch(function(){ /* offline: the field still works */ });
+  }
+
+  /* ---------- install + offline + share target ---------- */
+  var deferredPrompt = null;
+  window.addEventListener("beforeinstallprompt", function(e){
+    e.preventDefault(); deferredPrompt = e; $("installBtn").classList.remove("hidden");
+  });
+  $("installBtn").addEventListener("click", function(){
+    if(!deferredPrompt) return;
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(function(){
+      deferredPrompt = null; $("installBtn").classList.add("hidden");
+    });
+  });
+  window.addEventListener("appinstalled", function(){ $("installBtn").classList.add("hidden"); });
+
+  function netState(){ document.body.classList.toggle("is-offline", !navigator.onLine); }
+  window.addEventListener("online", netState);
+  window.addEventListener("offline", netState);
+  netState();
+
+  // Opened from the phone's share sheet (?url=... / ?text=...), or just
+  // remembering the last site typed.
+  var params = new URLSearchParams(location.search);
+  var shared = params.get("url") || params.get("text") || "";
+  var match = shared.match(/https?:\/\/\S+|(?:[\w-]+\.)+[a-z]{2,}(?:\/\S*)?/i);
+  if(match){
+    $("url").value = match[0];
+    history.replaceState({}, "", "/app");
+  } else {
+    try {
+      var last = localStorage.getItem("pp:lasturl");
+      if(last){ $("url").value = last; }
+    } catch(e){}
+  }
+
+  loadAccounts();
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("/sw.js", { scope:"/" }).catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>
