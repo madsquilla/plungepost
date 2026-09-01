@@ -31,7 +31,8 @@ COPY web/ ./web/
 # (owned by nobody:users) without permission errors. This is a homelab,
 # outbound-only batch/dashboard job, so root-in-container is acceptable here.
 
-# The web dashboard (when run) listens here. The batch poster needs no ports.
+# The web dashboard + phone app (when run) listen here. The batch poster
+# needs no ports.
 EXPOSE 8080
 
 # main.py reads ANTHROPIC_API_KEY, META_PAGE_ID, META_PAGE_ACCESS_TOKEN from env.

@@ -38,6 +38,7 @@ from flask import (
     send_from_directory, session, url_for,
 )
 
+import auth
 import cards
 import content
 import fbauth
@@ -65,11 +66,15 @@ if hasattr(time, "tzset"):
     time.tzset()
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET", "plungepost-local-dashboard")
 app.jinja_env.globals["compose_message"] = pub.compose_message
 
 # The phone app (/app) rides on the same server and the same account library.
 app.register_blueprint(pwa.bp)
+
+# Everything above is account data and spendable API keys, so the whole app
+# sits behind a password (loopback-only when none is set). Installed before
+# any other before_request handler so the gate runs first.
+auth.install(app)
 
 # Guards every queue read-modify-write so concurrent web requests never
 # corrupt the JSON files by writing at the same time. Shared with the PWA.
@@ -185,7 +190,7 @@ def _delete_card(item) -> None:
     if cp:
         p = Path(cp)
         if not p.is_absolute():
-            p = _REPO_ROOT / cp
+            p = tenants.STATE_DIR / cp
         try:
             p.unlink()
         except OSError:

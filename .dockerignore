@@ -1,0 +1,16 @@
+.git/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+logs/
+*.log
+tenants/
+data/pending.json
+data/approved.json
+data/history.json
+data/settings.json
+data/cards/
+data/dry_runs/
+assets/style_previews/

@@ -295,9 +295,71 @@ The app and the dashboard are the **same server and the same library** -- a
 post made on your phone shows up In Review on the dashboard, and vice versa.
 Nothing is published automatically from either one.
 
-> Security: like the dashboard, `/app` has **no login**. Keep it on localhost
-> or a trusted LAN (Tailscale or a VPN if you want it on your phone away from
-> home). Do **NOT** port-forward it.
+### Updating your Docker container for it
+
+The phone app is served from a new `web/` folder. Your container bind-mounts
+`src/`, `assets/` and `template/` but knew nothing about `web/`, so a plain
+`update.sh` would pull the new code and keep serving nothing at `/app`.
+`recreate-dashboard.sh` now mounts it. On the Unraid box, from the repo folder:
+
+```bash
+bash update.sh              # pull the new code
+bash recreate-dashboard.sh  # recreate the container WITH the web/ mount
+```
+
+**No image rebuild is needed** -- the phone app adds no new Python packages,
+and everything it uses (Flask, Pillow) is already in the image. You only need
+`rebuild-image.sh` when `requirements.txt` or the `Dockerfile` change.
+
+After that, `update.sh` alone is enough again for day-to-day updates; it warns
+you if it spots a container still missing the mount.
+
+Then open **http://\<unraid-ip\>:8095/app** (port 8095 is the host mapping in
+`recreate-dashboard.sh`).
+
+### Installing it on your phone
+
+Here is the catch, and it is worth knowing before you wonder why the buttons
+are missing: **service workers, the native share sheet, and the clipboard API
+only exist on a secure origin** -- `https://` or `localhost`. Over plain
+`http://10.0.0.38:8095` your phone will not install the app to the home
+screen, keep it working offline, or offer one-tap Share. The app detects this
+and says so in a banner rather than quietly dropping the buttons. Making
+posts, copying text and saving the image all still work.
+
+To get the real installable app, put it behind https. Any of these does it:
+
+- **Tailscale Serve** -- easiest if you already run Tailscale. It gives the
+  service a real certificate on your tailnet and works from your phone on cell
+  data, with no ports forwarded:
+  `tailscale serve --bg --https=443 http://localhost:8095`
+- **A reverse proxy you already run** -- SWAG or Nginx Proxy Manager on Unraid,
+  with a Let's Encrypt cert (DNS challenge, so nothing is exposed publicly).
+- **Cloudflare Tunnel** -- no open ports, real cert, reachable anywhere.
+
+Whichever you pick, set `PLUNGEPOST_HTTPS=1` in `.env` so the session cookie is
+marked https-only, and set `PLUNGEPOST_PASSWORD` (below) -- once it is
+reachable beyond the LAN, it needs a password.
+
+On iOS you can also just Share -> **Add to Home Screen** over plain http: it
+opens full-screen with the right icon, but with no offline support and no
+share sheet.
+
+### Password (optional)
+
+Unset, the dashboard and phone app are open to anyone who can reach the port
+-- unchanged from how this has always run, and fine on a trusted LAN. Set
+
+```
+PLUNGEPOST_PASSWORD=a long passphrase you will not lose
+```
+
+in `.env` and both require a sign-in that lasts 30 days, so the phone asks
+once. Failed attempts are throttled. Set this before putting the app behind a
+tunnel, a proxy, or a forwarded port.
+
+> Security: with no password set, `/app` and the dashboard have **no login**.
+> Keep them on a trusted LAN. Do **NOT** port-forward without a password.
 
 ---
 
@@ -440,6 +502,7 @@ plungepost/
   src/
     main.py        entry point, arg parsing, mode dispatch, logging
     webapp.py      Flask web dashboard (review/approve/publish)
+    auth.py        optional password gate (PLUNGEPOST_PASSWORD)
     pwa.py         phone app routes: shell, manifest, worker, icons, JSON API
     quick.py       URL -> finished post pipeline (onboard if new, then write)
     generate.py    Anthropic call + prompt assembly + JSON parsing

@@ -89,7 +89,7 @@ def _resolve_card(item: dict[str, Any]) -> Path | None:
         return None
     path = Path(rel)
     if not path.is_absolute():
-        path = _REPO_ROOT / rel
+        path = tenants.STATE_DIR / rel
     return path if path.exists() else None
 
 

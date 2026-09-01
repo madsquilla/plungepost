@@ -26,7 +26,14 @@ from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).resolve().parent.parent
-TENANTS_DIR = _ROOT / "tenants"
+
+# Where all mutable state lives (accounts, queues, rendered cards). Defaults to
+# the repo folder so a local checkout behaves exactly as it always has; hosted
+# deployments point PLUNGEPOST_DATA_DIR at a mounted volume so the data
+# survives a redeploy. Card paths are stored relative to this, so moving the
+# state dir does not invalidate them.
+STATE_DIR = Path(os.environ.get("PLUNGEPOST_DATA_DIR") or _ROOT)
+TENANTS_DIR = STATE_DIR / "tenants"
 _local = threading.local()
 
 # Fallback brand accent (SkySystems green / blue) if an account omits them.

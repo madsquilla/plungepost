@@ -57,6 +57,10 @@
   .offline{display:none;background:#5a3a12;color:#ffdca6;font-size:13.5px;
     padding:9px 16px;text-align:center;}
   body.is-offline .offline{display:block;}
+  .insecure{display:none;background:#41321a;color:#f0d6a4;font-size:13px;
+    padding:10px 16px;line-height:1.5;}
+  .insecure b{color:#ffe6b8;}
+  body.is-insecure .insecure{display:block;}
 
   /* ---- compose ---- */
   .hero h1{margin:14px 0 6px;font-size:26px;line-height:1.2;letter-spacing:-.02em;}
@@ -163,6 +167,10 @@
 </head>
 <body>
 <div class="offline">You're offline &mdash; past posts still open, new ones need a connection.</div>
+<div class="insecure">Served over plain <b>http</b>, so your phone won't let this
+install to the home screen, work offline, or use the one-tap share sheet.
+Making posts works fine. See the README's "Installing it on your phone" for
+how to put it behind https.</div>
 
 <div class="app">
   <header>
@@ -270,6 +278,7 @@
         <p>Posts you've made but not posted yet.</p></div>
       <div class="lib" id="libList"></div>
       <button class="btn ghost" id="libBack" style="margin-top:20px">Back</button>
+      <a class="btn ghost" href="/logout" style="margin-top:10px">Sign out</a>
     </section>
   </main>
 </div>
@@ -302,6 +311,10 @@
   function api(url, opts){
     return fetch(url, opts).then(function(r){
       return r.json().catch(function(){ return {}; }).then(function(body){
+        if(r.status === 401 && body.auth_required){
+          location.href = "/login?next=/app";
+          throw new Error("Signing you in…");
+        }
         if(!r.ok){ throw new Error(body.error || ("Request failed (" + r.status + ")")); }
         return body;
       });
@@ -518,6 +531,11 @@
   });
   window.addEventListener("appinstalled", function(){ $("installBtn").classList.add("hidden"); });
 
+  // Service workers, navigator.share and the clipboard API are all
+  // secure-context only: over plain http on a LAN IP they silently do not
+  // exist. Say so instead of just missing buttons.
+  if(!window.isSecureContext){ document.body.classList.add("is-insecure"); }
+
   function netState(){ document.body.classList.toggle("is-offline", !navigator.onLine); }
   window.addEventListener("online", netState);
   window.addEventListener("offline", netState);
@@ -540,7 +558,7 @@
 
   loadAccounts();
 
-  if("serviceWorker" in navigator){
+  if("serviceWorker" in navigator && window.isSecureContext){
     window.addEventListener("load", function(){
       navigator.serviceWorker.register("/sw.js", { scope:"/" }).catch(function(){});
     });

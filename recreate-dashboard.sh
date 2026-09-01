@@ -8,7 +8,10 @@
 #
 # Mounts:
 #   src/ assets/ template/  -> live code, so update.sh tarball drops take
-#                              effect on restart without rebuilding the image
+#     web/                     effect on restart without rebuilding the image.
+#                              web/ holds the phone app (/app); without this
+#                              mount, update.sh pulls a new phone app that the
+#                              container never serves.
 #   data/                   -> legacy queues + the migration source
 #   tenants/                -> EVERY account's brand, themes, logo, Facebook
 #                              token, queues, and cards. Without this mount,
@@ -32,10 +35,13 @@ docker run -d --name plungepost-dashboard --restart unless-stopped \
   -v "$PWD/src":/app/src \
   -v "$PWD/assets":/app/assets \
   -v "$PWD/template":/app/template \
+  -v "$PWD/web":/app/web \
   -v "$PWD/data":/app/data \
   -v "$PWD/tenants":/app/tenants \
   -v "$PWD/logs":/app/logs \
   --entrypoint python \
   plungepost:latest src/webapp.py
 
-echo "Done. Dashboard is up at http://<unraid-ip>:8095"
+echo "Done."
+echo "  Dashboard: http://<unraid-ip>:8095"
+echo "  Phone app: http://<unraid-ip>:8095/app"

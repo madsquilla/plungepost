@@ -14,8 +14,6 @@ import tenants
 
 logger = logging.getLogger("plungepost.cards")
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-
 
 def build_card(item: dict) -> dict:
     """Render the post's branded card. Sets item['card_path'] + ['image_style'].
@@ -56,7 +54,7 @@ def build_card(item: dict) -> dict:
                 Path(photo).unlink()
             except OSError:
                 pass
-        item["card_path"] = str(out.relative_to(_REPO_ROOT)).replace("\\", "/")
+        item["card_path"] = str(out.relative_to(tenants.STATE_DIR)).replace("\\", "/")
         item["card_account"] = tenants.current()
         logger.info("Built card (%s) -> %s", item["image_style"], item["card_path"])
     except Exception as exc:  # noqa: BLE001 -- imagery must never block a post
